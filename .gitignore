@@ -10,6 +10,11 @@ __pycache__/
 # Build artifacts
 /frontend/build
 /Example React Dashboard/dist
+*.exe
+
+# Uploads
+/backend/uploads/
+/backend/resources/
 
 # Test results
 /frontend/test-results/

@@ -51,7 +51,10 @@ def write_clients(clients):
 def read_exercises():
     """Reads the exercises from the JSON file."""
     data = read_json_file(EXERCISES_FILE)
-    return data if isinstance(data, list) else []
+    # Handle both formats: a list of exercises, or an object with an 'exercises' key
+    if isinstance(data, list):
+        return data
+    return data.get('exercises', [])
 
 def write_exercises(exercises):
     """Writes the exercises to the JSON file."""
@@ -156,9 +159,54 @@ def add_client():
 @app.route("/api/clients", methods=["GET"])
 @protected
 def get_clients():
-    """Lists all managed clients."""
+    """
+    Lists all managed clients.
+    Accepts an 'status' query parameter to filter by 'active' or 'archived'.
+    Defaults to 'active'.
+    """
     clients = read_clients()
-    return jsonify(clients)
+    status = request.args.get('status', 'active')
+
+    if status == 'active':
+        filtered_clients = [c for c in clients if not c.get('archived')]
+    elif status == 'archived':
+        filtered_clients = [c for c in clients if c.get('archived')]
+    else:
+        filtered_clients = clients
+
+    return jsonify(filtered_clients)
+
+@app.route("/api/clients/<client_id>", methods=["PUT"])
+@protected
+def update_client(client_id):
+    """Updates a client's details."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            client["name"] = data.get("name", client["name"])
+            client["email"] = data.get("email", client["email"])
+            write_clients(clients)
+            return jsonify(client)
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/clients/<client_id>/archive", methods=["PUT"])
+@protected
+def archive_client(client_id):
+    """Toggles the archive status of a client."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            client["archived"] = not client.get("archived", False)
+            write_clients(clients)
+            return jsonify(client)
+
+    return jsonify({"message": "Client not found!"}), 404
+
 
 @app.route("/api/clients/<client_id>/features", methods=["PUT"])
 @protected
@@ -554,7 +602,10 @@ def write_licenses(licenses):
 
 def read_prospects():
     """Reads the prospects from the JSON file."""
-    return read_json_file(PROSPECTS_FILE).get("prospects", [])
+    data = read_json_file(PROSPECTS_FILE)
+    if isinstance(data, list):
+        return data
+    return data.get("prospects", [])
 
 def write_prospects(prospects):
     """Writes the prospects to the JSON file."""
@@ -562,7 +613,10 @@ def write_prospects(prospects):
 
 def read_resources():
     """Reads the resources from the JSON file."""
-    return read_json_file(RESOURCES_FILE).get("resources", [])
+    data = read_json_file(RESOURCES_FILE)
+    if isinstance(data, list):
+        return data
+    return data.get("resources", [])
 
 def write_resources(resources):
     """Writes the resources to the JSON file."""

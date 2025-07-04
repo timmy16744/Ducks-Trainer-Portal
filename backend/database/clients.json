@@ -1,0 +1,80 @@
+[
+    {
+        "id": "7cb02fc8-34a8-4b7b-83c7-016dcf14849f",
+        "name": "Test Client 1751413781299",
+        "email": "test.client.1751413781299@example.com",
+        "unique_url": "/client/99ebbdcf-fd8c-43b5-9e15-f6d7fdc9662c",
+        "features": {
+            "calendar": false,
+            "gamification": false,
+            "nutrition_tracker": false,
+            "workout_logging": false,
+            "nutrition_mode": "plan"
+        }
+    },
+    {
+        "id": "78a1d504-dba5-490e-b30c-80069172fd43",
+        "name": "tim",
+        "email": "timhughes92@gmail.com",
+        "unique_url": "/client/ef12a753-2ed0-4fcb-8827-d724feecd8f4",
+        "features": {
+            "gamification": false,
+            "calendar": false,
+            "workout_logging": false,
+            "nutrition_tracker": false
+        }
+    },
+    {
+        "id": "471fa3ec-0fc5-4702-9231-1f8ec3f1403f",
+        "name": "Feature Test Client 1751481314935",
+        "email": "feature.test.1751481314935@example.com",
+        "unique_url": "/client/c2d16144-10fd-4d04-b37a-370e70149536",
+        "features": {
+            "gamification": false,
+            "calendar": false,
+            "workout_logging": false,
+            "nutrition_tracker": false
+        },
+        "points": 0
+    },
+    {
+        "id": "b2e487a2-c902-4600-8695-eb7d8e5cd592",
+        "name": "Feature Test Client 1751481368801",
+        "email": "feature.test.1751481368801@example.com",
+        "unique_url": "/client/ff3cf4de-04b7-42c4-a8e8-ab576e0e5c3a",
+        "features": {
+            "gamification": false,
+            "calendar": false,
+            "workout_logging": false,
+            "nutrition_tracker": false
+        },
+        "points": 0
+    },
+    {
+        "id": "0628adb1-bad3-42e8-9dba-a5714fde8a20",
+        "name": "Feature Test Client 1751481740695",
+        "email": "feature.test.1751481740695@example.com",
+        "unique_url": "/client/1c7a6c7a-c515-4c60-aae8-b1c047acc1ec",
+        "features": {
+            "calendar": true,
+            "gamification": true,
+            "nutrition_tracker": false,
+            "workout_logging": false
+        },
+        "points": 0
+    },
+    {
+        "id": "7d82d8fe-90ee-4663-8650-b0526d09d743",
+        "name": "John Doe",
+        "email": "john.doe@example.com",
+        "unique_url": "http://localhost:3000/client/7d82d8fe-90ee-4663-8650-b0526d09d743",
+        "features": {
+            "calendar": true,
+            "gamification": true,
+            "nutrition_mode": "plan",
+            "nutrition_tracker": true,
+            "workout_logging": true
+        },
+        "points": 0
+    }
+]

@@ -1,0 +1,22 @@
+{
+  "recipes": [
+    {
+      "id": "rec_1",
+      "name": "Chicken and Broccoli",
+      "ingredients": [
+        {"name": "Chicken Breast", "quantity": "1", "unit": "piece"},
+        {"name": "Broccoli", "quantity": "1", "unit": "cup"}
+      ],
+      "instructions": "1. Cook chicken. 2. Steam broccoli. 3. Combine."
+    },
+    {
+      "id": "rec_2",
+      "name": "Salmon and Asparagus",
+      "ingredients": [
+        {"name": "Salmon Fillet", "quantity": "1", "unit": "piece"},
+        {"name": "Asparagus", "quantity": "1", "unit": "bunch"}
+      ],
+      "instructions": "1. Bake salmon. 2. Roast asparagus. 3. Serve together."
+    }
+  ]
+}

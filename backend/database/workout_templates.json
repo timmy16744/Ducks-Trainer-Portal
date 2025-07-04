@@ -1,0 +1,190 @@
+[
+    {
+        "id": "wt_9839ae63-5056-4404-bc65-1989d08d95c8",
+        "name": "push",
+        "description": "1212",
+        "exercises": [
+            {
+                "category": {
+                    "id": 8,
+                    "name": "Arms"
+                },
+                "created_at": "2025-07-03T17:09:12.949889+00:00",
+                "description": "<p>Grab dumbbells and extend arms to side and hold as long as you can</p>",
+                "difficulty": "intermediate",
+                "equipment": [
+                    {
+                        "id": 3,
+                        "name": "Dumbbell"
+                    }
+                ],
+                "id": "exr_wger_31",
+                "images": [],
+                "instructions": "<p>Grab dumbbells and extend arms to side and hold as long as you can</p>",
+                "is_custom": false,
+                "license_author": "GrosseHund",
+                "mediaUrl": "",
+                "muscles": [],
+                "muscles_secondary": [],
+                "name": "Axe Hold",
+                "updated_at": "2025-07-03T17:09:12.949910+00:00",
+                "videos": [],
+                "wger_id": 31,
+                "wger_uuid": "f2733700-aa5d-4df7-bc52-1876ab4fb479",
+                "instanceId": "87d80ee0-dd1f-40d3-bf15-6a231cfdbdee",
+                "sets": "",
+                "reps": "",
+                "rpe": "",
+                "rest": "",
+                "notes": ""
+            },
+            {
+                "category": {
+                    "id": 10,
+                    "name": "Abs"
+                },
+                "created_at": "2025-07-03T17:09:12.949936+00:00",
+                "description": "No description available.",
+                "difficulty": "intermediate",
+                "equipment": [
+                    {
+                        "id": 4,
+                        "name": "Gym mat"
+                    }
+                ],
+                "id": "exr_wger_56",
+                "images": [],
+                "instructions": "No description available.",
+                "is_custom": false,
+                "license_author": "andikeller",
+                "mediaUrl": "",
+                "muscles": [
+                    {
+                        "id": 6,
+                        "image_url_main": "/static/images/muscles/main/muscle-6.svg",
+                        "image_url_secondary": "/static/images/muscles/secondary/muscle-6.svg",
+                        "is_front": true,
+                        "name": "Rectus abdominis",
+                        "name_en": "Abs"
+                    }
+                ],
+                "muscles_secondary": [
+                    {
+                        "id": 14,
+                        "image_url_main": "/static/images/muscles/main/muscle-14.svg",
+                        "image_url_secondary": "/static/images/muscles/secondary/muscle-14.svg",
+                        "is_front": true,
+                        "name": "Obliquus externus abdominis",
+                        "name_en": ""
+                    }
+                ],
+                "name": "Abdominal Stabilization",
+                "updated_at": "2025-07-03T17:09:12.949943+00:00",
+                "videos": [],
+                "wger_id": 56,
+                "wger_uuid": "03db11cc-8079-463c-9399-6f346b100ce6",
+                "instanceId": "347ecdac-458b-4b54-a628-d53141fbfd50",
+                "sets": "",
+                "reps": "",
+                "rpe": "",
+                "rest": "",
+                "notes": ""
+            }
+        ]
+    },
+    {
+        "id": "wt_d91fa1bc-eb87-4e44-a1dd-589b827d735e",
+        "name": "push (Copy)",
+        "description": "1212",
+        "notes": "",
+        "tags": [],
+        "exercises": [
+            {
+                "category": {
+                    "id": 8,
+                    "name": "Arms"
+                },
+                "created_at": "2025-07-03T17:09:12.949889+00:00",
+                "description": "<p>Grab dumbbells and extend arms to side and hold as long as you can</p>",
+                "difficulty": "intermediate",
+                "equipment": [
+                    {
+                        "id": 3,
+                        "name": "Dumbbell"
+                    }
+                ],
+                "id": "exr_wger_31",
+                "images": [],
+                "instructions": "<p>Grab dumbbells and extend arms to side and hold as long as you can</p>",
+                "is_custom": false,
+                "license_author": "GrosseHund",
+                "mediaUrl": "",
+                "muscles": [],
+                "muscles_secondary": [],
+                "name": "Axe Hold",
+                "updated_at": "2025-07-03T17:09:12.949910+00:00",
+                "videos": [],
+                "wger_id": 31,
+                "wger_uuid": "f2733700-aa5d-4df7-bc52-1876ab4fb479",
+                "instanceId": "87d80ee0-dd1f-40d3-bf15-6a231cfdbdee",
+                "sets": "",
+                "reps": "",
+                "rpe": "",
+                "rest": "",
+                "notes": ""
+            },
+            {
+                "category": {
+                    "id": 10,
+                    "name": "Abs"
+                },
+                "created_at": "2025-07-03T17:09:12.949936+00:00",
+                "description": "No description available.",
+                "difficulty": "intermediate",
+                "equipment": [
+                    {
+                        "id": 4,
+                        "name": "Gym mat"
+                    }
+                ],
+                "id": "exr_wger_56",
+                "images": [],
+                "instructions": "No description available.",
+                "is_custom": false,
+                "license_author": "andikeller",
+                "mediaUrl": "",
+                "muscles": [
+                    {
+                        "id": 6,
+                        "image_url_main": "/static/images/muscles/main/muscle-6.svg",
+                        "image_url_secondary": "/static/images/muscles/secondary/muscle-6.svg",
+                        "is_front": true,
+                        "name": "Rectus abdominis",
+                        "name_en": "Abs"
+                    }
+                ],
+                "muscles_secondary": [
+                    {
+                        "id": 14,
+                        "image_url_main": "/static/images/muscles/main/muscle-14.svg",
+                        "image_url_secondary": "/static/images/muscles/secondary/muscle-14.svg",
+                        "is_front": true,
+                        "name": "Obliquus externus abdominis",
+                        "name_en": ""
+                    }
+                ],
+                "name": "Abdominal Stabilization",
+                "updated_at": "2025-07-03T17:09:12.949943+00:00",
+                "videos": [],
+                "wger_id": 56,
+                "wger_uuid": "03db11cc-8079-463c-9399-6f346b100ce6",
+                "instanceId": "347ecdac-458b-4b54-a628-d53141fbfd50",
+                "sets": "",
+                "reps": "",
+                "rpe": "",
+                "rest": "",
+                "notes": ""
+            }
+        ]
+    }
+]

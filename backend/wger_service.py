@@ -160,10 +160,20 @@ class WgerService:
             name = english_translation["name"] if english_translation and english_translation.get("name") else f"Exercise {info['id']}"
             description = english_translation["description"] if english_translation and english_translation.get("description") else "No description available."
 
-            media_url = ""
-            if info.get("images"):
-                main_image = next((img for img in info["images"] if img.get("is_main")), info["images"][0])
-                media_url = main_image.get("image", "")
+            # Process images
+            cover_image_url = ""
+            all_image_urls = [img.get("image") for img in info.get("images", []) if img.get("image")]
+            if all_image_urls:
+                main_image = next((img for img in info["images"] if img.get("is_main")), None)
+                if main_image:
+                    cover_image_url = main_image.get("image", all_image_urls[0])
+                else:
+                    cover_image_url = all_image_urls[0]
+
+            # Process videos - assumes the first video is the primary one
+            video_url = ""
+            if info.get("videos"):
+                video_url = info["videos"][0].get("url", "")
 
             transformed_exercise = {
                 "id": f"exr_wger_{info['id']}",
@@ -172,7 +182,9 @@ class WgerService:
                 "name": name,
                 "instructions": description,
                 "description": description,
-                "mediaUrl": media_url,
+                "cover_image_url": cover_image_url,
+                "image_urls": all_image_urls,
+                "video_url": video_url,
                 "category": info.get("category"),
                 "muscles": info.get("muscles", []),
                 "muscles_secondary": info.get("muscles_secondary", []),

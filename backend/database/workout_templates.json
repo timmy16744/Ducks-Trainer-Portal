@@ -1,189 +1,535 @@
 [
     {
-        "id": "wt_9839ae63-5056-4404-bc65-1989d08d95c8",
-        "name": "push",
-        "description": "1212",
+        "id": "wt_push_demo_correct",
+        "name": "Demo: Push Day (Corrected)",
+        "description": "A sample workout focusing on upper body pushing muscles, with correct exercise data.",
+        "tags": [
+            "push",
+            "upper-body",
+            "strength"
+        ],
         "exercises": [
             {
-                "category": {
-                    "id": 8,
-                    "name": "Arms"
-                },
-                "created_at": "2025-07-03T17:09:12.949889+00:00",
-                "description": "<p>Grab dumbbells and extend arms to side and hold as long as you can</p>",
-                "difficulty": "intermediate",
-                "equipment": [
+                "id": "group_1",
+                "type": "standard",
+                "exercises": [
                     {
-                        "id": 3,
-                        "name": "Dumbbell"
+                        "id": "exr_wger_801",
+                        "instanceId": "push_ex1_corr",
+                        "name": "Dumbbell Push-Up",
+                        "sets": "3",
+                        "reps": "10",
+                        "rpe": "8",
+                        "rest": "60"
                     }
-                ],
-                "id": "exr_wger_31",
-                "images": [],
-                "instructions": "<p>Grab dumbbells and extend arms to side and hold as long as you can</p>",
-                "is_custom": false,
-                "license_author": "GrosseHund",
-                "mediaUrl": "",
-                "muscles": [],
-                "muscles_secondary": [],
-                "name": "Axe Hold",
-                "updated_at": "2025-07-03T17:09:12.949910+00:00",
-                "videos": [],
-                "wger_id": 31,
-                "wger_uuid": "f2733700-aa5d-4df7-bc52-1876ab4fb479",
-                "instanceId": "87d80ee0-dd1f-40d3-bf15-6a231cfdbdee",
-                "sets": "",
-                "reps": "",
-                "rpe": "",
-                "rest": "",
-                "notes": ""
+                ]
             },
             {
-                "category": {
-                    "id": 10,
-                    "name": "Abs"
-                },
-                "created_at": "2025-07-03T17:09:12.949936+00:00",
-                "description": "No description available.",
-                "difficulty": "intermediate",
-                "equipment": [
+                "id": "group_2",
+                "type": "standard",
+                "exercises": [
                     {
-                        "id": 4,
-                        "name": "Gym mat"
+                        "id": "exr_wger_20",
+                        "instanceId": "push_ex2_corr",
+                        "name": "Arnold Shoulder Press",
+                        "sets": "3",
+                        "reps": "12",
+                        "rpe": "8",
+                        "rest": "60"
                     }
-                ],
-                "id": "exr_wger_56",
-                "images": [],
-                "instructions": "No description available.",
-                "is_custom": false,
-                "license_author": "andikeller",
-                "mediaUrl": "",
-                "muscles": [
+                ]
+            },
+            {
+                "id": "group_3",
+                "type": "standard",
+                "exercises": [
                     {
-                        "id": 6,
-                        "image_url_main": "/static/images/muscles/main/muscle-6.svg",
-                        "image_url_secondary": "/static/images/muscles/secondary/muscle-6.svg",
-                        "is_front": true,
-                        "name": "Rectus abdominis",
-                        "name_en": "Abs"
+                        "id": "exr_wger_805",
+                        "instanceId": "push_ex3_corr",
+                        "name": "Tricep Pushdown on Cable",
+                        "sets": "3",
+                        "reps": "15",
+                        "rpe": "9",
+                        "rest": "45"
                     }
-                ],
-                "muscles_secondary": [
-                    {
-                        "id": 14,
-                        "image_url_main": "/static/images/muscles/main/muscle-14.svg",
-                        "image_url_secondary": "/static/images/muscles/secondary/muscle-14.svg",
-                        "is_front": true,
-                        "name": "Obliquus externus abdominis",
-                        "name_en": ""
-                    }
-                ],
-                "name": "Abdominal Stabilization",
-                "updated_at": "2025-07-03T17:09:12.949943+00:00",
-                "videos": [],
-                "wger_id": 56,
-                "wger_uuid": "03db11cc-8079-463c-9399-6f346b100ce6",
-                "instanceId": "347ecdac-458b-4b54-a628-d53141fbfd50",
-                "sets": "",
-                "reps": "",
-                "rpe": "",
-                "rest": "",
-                "notes": ""
+                ]
             }
         ]
     },
     {
-        "id": "wt_d91fa1bc-eb87-4e44-a1dd-589b827d735e",
-        "name": "push (Copy)",
-        "description": "1212",
-        "notes": "",
-        "tags": [],
+        "id": "wt_pull_demo_correct",
+        "name": "Demo: Pull Day (Corrected)",
+        "description": "A sample workout focusing on upper body pulling muscles, with correct exercise data.",
+        "tags": [
+            "pull",
+            "upper-body",
+            "strength"
+        ],
         "exercises": [
             {
-                "category": {
-                    "id": 8,
-                    "name": "Arms"
-                },
-                "created_at": "2025-07-03T17:09:12.949889+00:00",
-                "description": "<p>Grab dumbbells and extend arms to side and hold as long as you can</p>",
-                "difficulty": "intermediate",
-                "equipment": [
+                "id": "group_1",
+                "type": "standard",
+                "exercises": [
                     {
-                        "id": 3,
-                        "name": "Dumbbell"
+                        "id": "exr_wger_980",
+                        "instanceId": "pull_ex1_corr",
+                        "name": "commando pull-ups",
+                        "sets": "4",
+                        "reps": "8",
+                        "rpe": "9",
+                        "rest": "90"
                     }
-                ],
-                "id": "exr_wger_31",
-                "images": [],
-                "instructions": "<p>Grab dumbbells and extend arms to side and hold as long as you can</p>",
-                "is_custom": false,
-                "license_author": "GrosseHund",
-                "mediaUrl": "",
-                "muscles": [],
-                "muscles_secondary": [],
-                "name": "Axe Hold",
-                "updated_at": "2025-07-03T17:09:12.949910+00:00",
-                "videos": [],
-                "wger_id": 31,
-                "wger_uuid": "f2733700-aa5d-4df7-bc52-1876ab4fb479",
-                "instanceId": "87d80ee0-dd1f-40d3-bf15-6a231cfdbdee",
-                "sets": "",
-                "reps": "",
-                "rpe": "",
-                "rest": "",
-                "notes": ""
+                ]
             },
             {
-                "category": {
-                    "id": 10,
-                    "name": "Abs"
-                },
-                "created_at": "2025-07-03T17:09:12.949936+00:00",
-                "description": "No description available.",
-                "difficulty": "intermediate",
-                "equipment": [
+                "id": "group_2",
+                "type": "standard",
+                "exercises": [
                     {
-                        "id": 4,
-                        "name": "Gym mat"
+                        "id": "exr_wger_1022",
+                        "instanceId": "pull_ex2_corr",
+                        "name": "Single Arm Plank to Row",
+                        "sets": "3",
+                        "reps": "10",
+                        "rpe": "8",
+                        "rest": "60"
                     }
-                ],
-                "id": "exr_wger_56",
-                "images": [],
-                "instructions": "No description available.",
-                "is_custom": false,
-                "license_author": "andikeller",
-                "mediaUrl": "",
-                "muscles": [
+                ]
+            },
+            {
+                "id": "group_3",
+                "type": "standard",
+                "exercises": [
                     {
-                        "id": 6,
-                        "image_url_main": "/static/images/muscles/main/muscle-6.svg",
-                        "image_url_secondary": "/static/images/muscles/secondary/muscle-6.svg",
-                        "is_front": true,
-                        "name": "Rectus abdominis",
-                        "name_en": "Abs"
+                        "id": "exr_wger_958",
+                        "instanceId": "pull_ex3_corr",
+                        "name": "Biceps with TRX",
+                        "sets": "3",
+                        "reps": "12",
+                        "rpe": "9",
+                        "rest": "45"
                     }
-                ],
-                "muscles_secondary": [
+                ]
+            }
+        ]
+    },
+    {
+        "id": "wt_legs_demo_correct",
+        "name": "Demo: Leg Day (Corrected)",
+        "description": "A sample workout focusing on lower body muscles, with correct exercise data.",
+        "tags": [
+            "legs",
+            "lower-body",
+            "strength"
+        ],
+        "exercises": [
+            {
+                "id": "group_1",
+                "type": "standard",
+                "exercises": [
                     {
-                        "id": 14,
-                        "image_url_main": "/static/images/muscles/main/muscle-14.svg",
-                        "image_url_secondary": "/static/images/muscles/secondary/muscle-14.svg",
-                        "is_front": true,
-                        "name": "Obliquus externus abdominis",
-                        "name_en": ""
+                        "id": "exr_wger_977",
+                        "instanceId": "legs_ex1_corr",
+                        "name": "Box Squat",
+                        "sets": "4",
+                        "reps": "8",
+                        "rpe": "8",
+                        "rest": "120"
                     }
-                ],
-                "name": "Abdominal Stabilization",
-                "updated_at": "2025-07-03T17:09:12.949943+00:00",
-                "videos": [],
-                "wger_id": 56,
-                "wger_uuid": "03db11cc-8079-463c-9399-6f346b100ce6",
-                "instanceId": "347ecdac-458b-4b54-a628-d53141fbfd50",
-                "sets": "",
-                "reps": "",
-                "rpe": "",
-                "rest": "",
-                "notes": ""
+                ]
+            },
+            {
+                "id": "group_2",
+                "type": "standard",
+                "exercises": [
+                    {
+                        "id": "exr_wger_984",
+                        "instanceId": "legs_ex2_corr",
+                        "name": "Lunges",
+                        "sets": "3",
+                        "reps": "12",
+                        "rpe": "8",
+                        "rest": "60"
+                    }
+                ]
+            },
+            {
+                "id": "group_3",
+                "type": "standard",
+                "exercises": [
+                    {
+                        "id": "exr_wger_57",
+                        "instanceId": "legs_ex3_corr",
+                        "name": "Bear Walk",
+                        "sets": "3",
+                        "reps": "60s",
+                        "rpe": "9",
+                        "rest": "60"
+                    }
+                ]
+            }
+        ]
+    },
+    {
+        "id": "wt_8a1fc146-5106-491b-8c0e-65a42d36b592",
+        "name": "push 1",
+        "description": "push 1",
+        "exercises": [
+            {
+                "id": "4323303f-f255-42bc-b4a0-e9ddc0dffe72",
+                "type": "standard",
+                "exercises": [
+                    {
+                        "category": {
+                            "id": 15,
+                            "name": "Cardio"
+                        },
+                        "created_at": "2025-07-03T17:09:12.950231+00:00",
+                        "description": "Suspension exercise with trx for chest training",
+                        "difficulty": "intermediate",
+                        "equipment": [
+                            {
+                                "id": 7,
+                                "name": "none (bodyweight exercise)"
+                            }
+                        ],
+                        "id": "exr_wger_927",
+                        "images": [
+                            {
+                                "author_history": [],
+                                "exercise": 927,
+                                "exercise_uuid": "e0d9e9ef-09ee-4d26-9504-622093810414",
+                                "id": 248,
+                                "image": "https://wger.de/media/exercise-images/927/7b392101-9c47-4693-935e-a88b1887eec5.jpg",
+                                "is_main": true,
+                                "license": 2,
+                                "license_author": null,
+                                "license_author_url": "",
+                                "license_derivative_source_url": "",
+                                "license_object_url": "",
+                                "license_title": "",
+                                "style": "4",
+                                "uuid": "7b392101-9c47-4693-935e-a88b1887eec5"
+                            }
+                        ],
+                        "instructions": "Suspension exercise with trx for chest training",
+                        "is_custom": false,
+                        "license_author": null,
+                        "mediaUrl": "https://wger.de/media/exercise-images/927/7b392101-9c47-4693-935e-a88b1887eec5.jpg",
+                        "muscles": [
+                            {
+                                "id": 4,
+                                "image_url_main": "/static/images/muscles/main/muscle-4.svg",
+                                "image_url_secondary": "/static/images/muscles/secondary/muscle-4.svg",
+                                "is_front": true,
+                                "name": "Pectoralis major",
+                                "name_en": "Chest"
+                            }
+                        ],
+                        "muscles_secondary": [],
+                        "name": "Suspended crossess",
+                        "updated_at": "2025-07-03T17:09:12.950265+00:00",
+                        "videos": [],
+                        "wger_id": 927,
+                        "wger_uuid": "e0d9e9ef-09ee-4d26-9504-622093810414",
+                        "instanceId": "b314ab78-e2bd-4fd1-9fef-6e581b694c61",
+                        "sets": "3",
+                        "reps": "15",
+                        "rpe": "9",
+                        "rest": "30",
+                        "notes": "a"
+                    },
+                    {
+                        "category": {
+                            "id": 11,
+                            "name": "Chest"
+                        },
+                        "created_at": "2025-07-03T17:09:12.951077+00:00",
+                        "description": "<p>The movement is very similar to benchpressing with a barbell, however, the weight is brought down to the chest at a lower point.</p>\n<p>Hold two dumbbells and lay down on a bench. Hold the weights next to the chest, at the height of your nipples and press them up till the arms are stretched. Let the weight slowly and controlled down.</p>",
+                        "difficulty": "intermediate",
+                        "equipment": [
+                            {
+                                "id": 8,
+                                "name": "Bench"
+                            },
+                            {
+                                "id": 3,
+                                "name": "Dumbbell"
+                            }
+                        ],
+                        "id": "exr_wger_75",
+                        "images": [
+                            {
+                                "author_history": [],
+                                "exercise": 75,
+                                "exercise_uuid": "28321cf3-70e6-48a4-ade1-d11382180cb3",
+                                "id": 113,
+                                "image": "https://wger.de/media/exercise-images/97/Dumbbell-bench-press-1.png",
+                                "is_main": true,
+                                "license": 1,
+                                "license_author": "Everkinetic",
+                                "license_author_url": "",
+                                "license_derivative_source_url": "",
+                                "license_object_url": "",
+                                "license_title": "",
+                                "style": "1",
+                                "uuid": "87a312b7-d01e-4f69-9bda-1ed2f1fcd9ab"
+                            },
+                            {
+                                "author_history": [],
+                                "exercise": 75,
+                                "exercise_uuid": "28321cf3-70e6-48a4-ade1-d11382180cb3",
+                                "id": 114,
+                                "image": "https://wger.de/media/exercise-images/97/Dumbbell-bench-press-2.png",
+                                "is_main": false,
+                                "license": 1,
+                                "license_author": "Everkinetic",
+                                "license_author_url": "",
+                                "license_derivative_source_url": "",
+                                "license_object_url": "",
+                                "license_title": "",
+                                "style": "1",
+                                "uuid": "3c765b1e-eab9-4b61-8e2e-7d7591cb6ccb"
+                            }
+                        ],
+                        "instructions": "<p>The movement is very similar to benchpressing with a barbell, however, the weight is brought down to the chest at a lower point.</p>\n<p>Hold two dumbbells and lay down on a bench. Hold the weights next to the chest, at the height of your nipples and press them up till the arms are stretched. Let the weight slowly and controlled down.</p>",
+                        "is_custom": false,
+                        "license_author": "wger.de",
+                        "mediaUrl": "https://wger.de/media/exercise-images/97/Dumbbell-bench-press-1.png",
+                        "muscles": [
+                            {
+                                "id": 4,
+                                "image_url_main": "/static/images/muscles/main/muscle-4.svg",
+                                "image_url_secondary": "/static/images/muscles/secondary/muscle-4.svg",
+                                "is_front": true,
+                                "name": "Pectoralis major",
+                                "name_en": "Chest"
+                            }
+                        ],
+                        "muscles_secondary": [
+                            {
+                                "id": 2,
+                                "image_url_main": "/static/images/muscles/main/muscle-2.svg",
+                                "image_url_secondary": "/static/images/muscles/secondary/muscle-2.svg",
+                                "is_front": true,
+                                "name": "Anterior deltoid",
+                                "name_en": "Shoulders"
+                            },
+                            {
+                                "id": 5,
+                                "image_url_main": "/static/images/muscles/main/muscle-5.svg",
+                                "image_url_secondary": "/static/images/muscles/secondary/muscle-5.svg",
+                                "is_front": false,
+                                "name": "Triceps brachii",
+                                "name_en": "Triceps"
+                            }
+                        ],
+                        "name": "Benchpress Dumbbells",
+                        "updated_at": "2025-07-03T17:09:12.951080+00:00",
+                        "videos": [
+                            {
+                                "author_history": [
+                                    "Goulart"
+                                ],
+                                "codec": "h264",
+                                "codec_long": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+                                "duration": "14.16",
+                                "exercise": 75,
+                                "height": 1080,
+                                "id": 17,
+                                "is_main": false,
+                                "license": 2,
+                                "license_author": "Goulart",
+                                "license_author_url": "",
+                                "license_derivative_source_url": "",
+                                "license_object_url": "",
+                                "license_title": "",
+                                "size": 4543158,
+                                "uuid": "080c799b-8afd-4130-8d72-9cef0cd79f54",
+                                "video": "https://wger.de/media/exercise-video/75/080c799b-8afd-4130-8d72-9cef0cd79f54.MOV",
+                                "width": 1920
+                            },
+                            {
+                                "author_history": [
+                                    "Goulart"
+                                ],
+                                "codec": "h264",
+                                "codec_long": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+                                "duration": "30.09",
+                                "exercise": 75,
+                                "height": 1080,
+                                "id": 18,
+                                "is_main": false,
+                                "license": 2,
+                                "license_author": "Goulart",
+                                "license_author_url": "",
+                                "license_derivative_source_url": "",
+                                "license_object_url": "",
+                                "license_title": "",
+                                "size": 9894638,
+                                "uuid": "a8263fe5-3015-41e3-9781-2d255adcea63",
+                                "video": "https://wger.de/media/exercise-video/75/a8263fe5-3015-41e3-9781-2d255adcea63.MOV",
+                                "width": 1920
+                            },
+                            {
+                                "author_history": [
+                                    "Goulart"
+                                ],
+                                "codec": "h264",
+                                "codec_long": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+                                "duration": "28.26",
+                                "exercise": 75,
+                                "height": 1080,
+                                "id": 19,
+                                "is_main": false,
+                                "license": 2,
+                                "license_author": "Goulart",
+                                "license_author_url": "",
+                                "license_derivative_source_url": "",
+                                "license_object_url": "",
+                                "license_title": "",
+                                "size": 9938046,
+                                "uuid": "9d803f97-0a48-4483-8f1c-ee5b19d6021e",
+                                "video": "https://wger.de/media/exercise-video/75/9d803f97-0a48-4483-8f1c-ee5b19d6021e.MOV",
+                                "width": 1920
+                            },
+                            {
+                                "author_history": [
+                                    "Goulart"
+                                ],
+                                "codec": "h264",
+                                "codec_long": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+                                "duration": "11.28",
+                                "exercise": 75,
+                                "height": 1080,
+                                "id": 20,
+                                "is_main": false,
+                                "license": 2,
+                                "license_author": "Goulart",
+                                "license_author_url": "",
+                                "license_derivative_source_url": "",
+                                "license_object_url": "",
+                                "license_title": "",
+                                "size": 4576193,
+                                "uuid": "c9cbd391-1e22-4014-8794-04630c80665f",
+                                "video": "https://wger.de/media/exercise-video/75/c9cbd391-1e22-4014-8794-04630c80665f.MOV",
+                                "width": 1920
+                            }
+                        ],
+                        "wger_id": 75,
+                        "wger_uuid": "28321cf3-70e6-48a4-ade1-d11382180cb3",
+                        "instanceId": "3e2feff8-b50c-4963-a3be-32ad0cc079fc",
+                        "sets": "3",
+                        "reps": "9",
+                        "rpe": "3",
+                        "rest": "5",
+                        "notes": "b"
+                    },
+                    {
+                        "category": {
+                            "id": 12,
+                            "name": "Back"
+                        },
+                        "created_at": "2025-07-03T17:09:12.956562+00:00",
+                        "description": "Doubling as a back and chest exercise, the Dumbbell Pullover can train both your pecs and lats.",
+                        "difficulty": "intermediate",
+                        "equipment": [
+                            {
+                                "id": 3,
+                                "name": "Dumbbell"
+                            }
+                        ],
+                        "id": "exr_wger_1273",
+                        "images": [],
+                        "instructions": "Doubling as a back and chest exercise, the Dumbbell Pullover can train both your pecs and lats.",
+                        "is_custom": false,
+                        "license_author": "3leh",
+                        "mediaUrl": "",
+                        "muscles": [
+                            {
+                                "id": 4,
+                                "image_url_main": "/static/images/muscles/main/muscle-4.svg",
+                                "image_url_secondary": "/static/images/muscles/secondary/muscle-4.svg",
+                                "is_front": true,
+                                "name": "Pectoralis major",
+                                "name_en": "Chest"
+                            }
+                        ],
+                        "muscles_secondary": [
+                            {
+                                "id": 12,
+                                "image_url_main": "/static/images/muscles/main/muscle-12.svg",
+                                "image_url_secondary": "/static/images/muscles/secondary/muscle-12.svg",
+                                "is_front": false,
+                                "name": "Latissimus dorsi",
+                                "name_en": "Lats"
+                            }
+                        ],
+                        "name": "Pullover",
+                        "updated_at": "2025-07-03T17:09:12.956565+00:00",
+                        "videos": [],
+                        "wger_id": 1273,
+                        "wger_uuid": "9ccd53e0-8392-4e61-91aa-e4e5f4ea339c",
+                        "instanceId": "542a8f3f-2ec6-4a90-9269-340d845f65ca",
+                        "sets": "5",
+                        "reps": "4",
+                        "rpe": "1",
+                        "rest": "9",
+                        "notes": "c"
+                    },
+                    {
+                        "category": {
+                            "id": 12,
+                            "name": "Back"
+                        },
+                        "created_at": "2025-07-03T17:09:12.956562+00:00",
+                        "description": "Doubling as a back and chest exercise, the Dumbbell Pullover can train both your pecs and lats.",
+                        "difficulty": "intermediate",
+                        "equipment": [
+                            {
+                                "id": 3,
+                                "name": "Dumbbell"
+                            }
+                        ],
+                        "id": "exr_wger_1273",
+                        "images": [],
+                        "instructions": "Doubling as a back and chest exercise, the Dumbbell Pullover can train both your pecs and lats.",
+                        "is_custom": false,
+                        "license_author": "3leh",
+                        "mediaUrl": "",
+                        "muscles": [
+                            {
+                                "id": 4,
+                                "image_url_main": "/static/images/muscles/main/muscle-4.svg",
+                                "image_url_secondary": "/static/images/muscles/secondary/muscle-4.svg",
+                                "is_front": true,
+                                "name": "Pectoralis major",
+                                "name_en": "Chest"
+                            }
+                        ],
+                        "muscles_secondary": [
+                            {
+                                "id": 12,
+                                "image_url_main": "/static/images/muscles/main/muscle-12.svg",
+                                "image_url_secondary": "/static/images/muscles/secondary/muscle-12.svg",
+                                "is_front": false,
+                                "name": "Latissimus dorsi",
+                                "name_en": "Lats"
+                            }
+                        ],
+                        "name": "Pullover",
+                        "updated_at": "2025-07-03T17:09:12.956565+00:00",
+                        "videos": [],
+                        "wger_id": 1273,
+                        "wger_uuid": "9ccd53e0-8392-4e61-91aa-e4e5f4ea339c",
+                        "instanceId": "b74522d5-6fce-47f7-a4b5-ec89a6e87ff7",
+                        "sets": "3",
+                        "reps": "2",
+                        "rpe": "4",
+                        "rest": "2",
+                        "notes": "d"
+                    }
+                ]
             }
         ]
     }

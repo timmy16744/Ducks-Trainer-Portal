@@ -1,7 +1,7 @@
 [
     {
         "id": "7cb02fc8-34a8-4b7b-83c7-016dcf14849f",
-        "name": "Test Client 1751413781299",
+        "name": "chiara",
         "email": "test.client.1751413781299@example.com",
         "unique_url": "/client/99ebbdcf-fd8c-43b5-9e15-f6d7fdc9662c",
         "features": {
@@ -10,6 +10,12 @@
             "nutrition_tracker": false,
             "workout_logging": false,
             "nutrition_mode": "plan"
+        },
+        "daily_metrics": {
+            "2025-07-06": {
+                "water_glasses": 3,
+                "steps": 6000
+            }
         }
     },
     {

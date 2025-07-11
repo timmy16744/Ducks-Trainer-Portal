@@ -4,6 +4,7 @@ This repository contains the complete application template for a self-hosted coa
 
 ## Features
 
+- **Enhanced Client Dashboard:** Experience a smooth, mobile-app-like interface with intuitive navigation and subtle animations.
 - **Client Management:** Add, organize, and manage clients with ease.
 - **Workout Builder & Tracking:** Create custom workout plans and enable clients to log their progress.
 - **Nutrition Planning & Tracking:** Offer meal plans or allow clients to track their macros.

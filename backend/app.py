@@ -7,10 +7,17 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room
 from functools import wraps
 from wger_service import WgerService
+from achievements_service import check_for_new_pbs, add_achievements_to_client
+from exercisedb_service import sync_exercises_from_exercisedb
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
-socketio = SocketIO(app, cors_allowed_origins="*")
+# More robust CORS configuration
+CORS(app, supports_credentials=True, resources={r"/api/*": {
+    "origins": "http://localhost:3000",
+    "allow_headers": ["Authorization", "Content-Type"],
+    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+}})
+socketio = SocketIO(app, cors_allowed_origins="http://localhost:3000")
 
 # --- Configuration ---
 # In a real application, this would be a more secure way to handle secrets
@@ -23,6 +30,10 @@ WORKOUT_ASSIGNMENTS_FILE = os.path.join("database", "workout_assignments.json")
 GROUPS_FILE = os.path.join("database", "groups.json")
 ALERTS_FILE = os.path.join("database", "alerts.json")
 PROGRAMS_FILE = os.path.join("database", "programs.json")
+EXERCISE_HISTORY_FILE = os.path.join("database", "exercise_history.json")
+PERSONAL_RECORDS_FILE = os.path.join("database", "personal_records.json")
+CLIENT_WORKOUTS_FILE = os.path.join("database", "client_workouts.json")
+WORKOUT_LOGS_FILE = os.path.join("database", "workout_logs.json")
 
 # Initialize WGER service
 wger_service = WgerService(WGER_API_KEY)
@@ -105,6 +116,42 @@ def write_programs(programs):
     """Writes the programs to the JSON file."""
     write_json_file(PROGRAMS_FILE, programs)
 
+def read_exercise_history():
+    """Reads the exercise history from the JSON file."""
+    data = read_json_file(EXERCISE_HISTORY_FILE)
+    return data if isinstance(data, list) else []
+
+def write_exercise_history(history):
+    """Writes the exercise history to the JSON file."""
+    write_json_file(EXERCISE_HISTORY_FILE, history)
+
+def read_personal_records():
+    """Reads the personal records from the JSON file."""
+    data = read_json_file(PERSONAL_RECORDS_FILE)
+    return data if isinstance(data, list) else []
+
+def write_personal_records(records):
+    """Writes the personal records to the JSON file."""
+    write_json_file(PERSONAL_RECORDS_FILE, records)
+
+def read_client_workouts():
+    """Reads the client workouts from the JSON file."""
+    data = read_json_file(CLIENT_WORKOUTS_FILE)
+    return data if isinstance(data, list) else []
+
+def write_client_workouts(workouts):
+    """Writes the client workouts to the JSON file."""
+    write_json_file(CLIENT_WORKOUTS_FILE, workouts)
+
+def read_workout_logs():
+    """Reads the workout logs from the JSON file."""
+    data = read_json_file(WORKOUT_LOGS_FILE)
+    return data if isinstance(data, list) else []
+
+def write_workout_logs(logs):
+    """Writes the workout logs to the JSON file."""
+    write_json_file(WORKOUT_LOGS_FILE, logs)
+
 # --- Decorators ---
 
 def protected(f):
@@ -176,6 +223,20 @@ def get_clients():
 
     return jsonify(filtered_clients)
 
+@app.route("/api/workout-assignments", methods=["GET"])
+@protected
+def get_workout_assignments():
+    """
+    Lists all workout assignments. Can be filtered by client_id.
+    """
+    assignments = read_workout_assignments()
+    client_id = request.args.get('client_id')
+
+    if client_id:
+        assignments = [a for a in assignments if a.get('client_id') == client_id]
+
+    return jsonify(assignments)
+
 @app.route("/api/clients/<client_id>", methods=["PUT"])
 @protected
 def update_client(client_id):
@@ -234,9 +295,87 @@ def get_client(client_id):
             return jsonify(client)
     return jsonify({"message": "Client not found!"}), 404
 
+@app.route("/api/client/<client_id>/today", methods=["GET"])
+def get_client_today(client_id):
+    """Gets all of a client's tasks for the current day."""
+    today = datetime.now().date()
+    
+    # Get workout for today
+    assignments = read_workout_assignments()
+    todays_workout = next((a for a in assignments if a["client_id"] == client_id and a["date"] == today.isoformat()), None)
+
+    # Get check-in for today
+    clients = read_clients()
+    client = next((c for c in clients if c["id"] == client_id), None)
+    todays_checkin = None
+    if client and "daily_checkins" in client:
+        todays_checkin = next((c for c in client["daily_checkins"] if c["date"] == today.isoformat()), None)
+
+    # --- NEW: Get daily metrics for today ---
+    todays_metrics = { "water_glasses": 0, "steps": 0 }
+    if client and "daily_metrics" in client and today.isoformat() in client["daily_metrics"]:
+        todays_metrics = client["daily_metrics"][today.isoformat()]
+    # --- END NEW ---
+
+    response = {
+        "workout": todays_workout,
+        "check_in": todays_checkin,
+        "metrics": todays_metrics,
+         "macros": client.get("macros", {}),
+         "achievements": client.get("achievements", [])
+    }
+    return jsonify(response)
+
+@app.route("/api/client/<client_id>/log/<metric>", methods=["POST"])
+def log_daily_metric(client_id, metric):
+    """
+    Increments a daily metric (e.g., water, steps) for a client.
+    Expects a JSON body with an 'amount' field to increment by.
+    """
+    data = request.get_json()
+    amount = data.get("amount")
+
+    if amount is None:
+        return jsonify({"message": "Missing 'amount' in request body"}), 400
+    
+    if metric not in ["water", "steps"]:
+        return jsonify({"message": f"Invalid metric: {metric}"}), 400
+
+    clients = read_clients()
+    client = next((c for c in clients if c["id"] == client_id), None)
+
+    if not client:
+        return jsonify({"message": "Client not found"}), 404
+
+    today_str = datetime.now().date().isoformat()
+    metric_key_map = {
+        "water": "water_glasses",
+        "steps": "steps"
+    }
+    metric_key = metric_key_map[metric]
+
+    # Initialize daily_metrics if it doesn't exist
+    if "daily_metrics" not in client:
+        client["daily_metrics"] = {}
+    
+    # Initialize today's metrics if they don't exist
+    if today_str not in client["daily_metrics"]:
+        client["daily_metrics"][today_str] = {
+            "water_glasses": 0,
+            "steps": 0
+        }
+
+    # Increment the metric
+    client["daily_metrics"][today_str][metric_key] = client["daily_metrics"][today_str].get(metric_key, 0) + amount
+    
+    write_clients(clients)
+    
+    # Return the updated metrics for today
+    return jsonify(client["daily_metrics"][today_str])
+
 @app.route("/api/client/<client_id>/complete_task", methods=["POST"])
 def complete_task(client_id):
-    """Completes a task for a client and awards points."""
+    """Marks a task as complete for a client."""
     clients = read_clients()
     for client in clients:
         if client["id"] == client_id:
@@ -281,15 +420,15 @@ def add_exercise():
 @app.route("/api/wger/sync", methods=["POST"])
 @protected
 def sync_wger_exercises():
-    """Syncs exercises from WGER API."""
-    data = request.get_json()
-    limit = data.get("limit", 100) if data else 100
-    
     try:
-        result = wger_service.sync_exercises(limit=limit)
-        return jsonify(result), 200
+        sync_result = wger_service.sync_exercises()
+        if sync_result.get("status") == "success":
+            return jsonify({"message": sync_result["message"]}), 200
+        else:
+            return jsonify({"message": sync_result["message"]}), 500
     except Exception as e:
-        return jsonify({"status": "error", "error": str(e)}), 500
+        app.logger.error(f"Error during WGER sync: {e}")
+        return jsonify({"message": f"Internal server error during WGER sync: {str(e)}"}), 500
 
 @app.route("/api/wger/status", methods=["GET"])
 @protected
@@ -318,6 +457,19 @@ def get_enhanced_exercises():
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# ExerciseDB API sync endpoint
+@app.route('/api/exercisedb/sync', methods=['POST'])
+def sync_exercisedb_data():
+    try:
+        sync_result = sync_exercises_from_exercisedb()
+        if sync_result.get("status") == "success":
+            return jsonify({"message": sync_result["message"]}), 200
+        else:
+            return jsonify({"message": sync_result["message"]}), 500
+    except Exception as e:
+        app.logger.error(f"Error during ExerciseDB sync: {e}")
+        return jsonify({"message": f"Internal server error during ExerciseDB sync: {str(e)}"}), 500
 
 # --- Workout Template Endpoints ---
 
@@ -411,54 +563,63 @@ def duplicate_workout_template(template_id):
     write_workout_templates(templates)
     return jsonify(new_template), 201
 
-# --- Workout Assignment Endpoints ---
+@app.route("/api/client/<client_id>/program", methods=["GET"])
+def get_client_program(client_id):
+    """
+    Gets the client's currently assigned program and enriches it with
+    the last logged data for each exercise.
+    """
+    client_workouts = read_client_workouts()
+    workout_logs = read_workout_logs()
 
-@app.route("/api/workout-assignments", methods=["GET", "POST"])
-@protected
-def assign_workout():
-    if request.method == 'GET':
-        assignments = read_workout_assignments()
-        return jsonify(assignments)
+    # Find the client's most recent program assignment
+    client_program = next((p for p in reversed(client_workouts) if p["client_id"] == client_id), None)
 
-    """Assigns a workout template to a client for a specific day."""
+    if not client_program:
+        return jsonify({"message": "No program assigned to this client."}), 404
+
+    # For each exercise in the program, find the last time it was logged
+    for day in client_program.get("days", []):
+        for group in day.get("groups", []):
+            for exercise in group.get("exercises", []):
+                # Find the most recent log for this specific exercise by this client
+                last_log = next((log for log in reversed(workout_logs) 
+                                 if log["client_id"] == client_id and log["exercise_id"] == exercise["exercise_id"]), None)
+                
+                if last_log:
+                    exercise["last_session"] = last_log["logged_sets"]
+
+    return jsonify(client_program)
+
+@app.route("/api/client/<client_id>/program/log", methods=["POST"])
+def log_client_workout(client_id):
+    """
+    Logs a completed workout session for a client.
+    """
     data = request.get_json()
-    if not data or not data.get("client_id") or not data.get("template_id") or not data.get("date"):
-        return jsonify({"message": "Client ID, template ID, and date are required!"}), 400
+    if not data or not data.get("client_program_id") or not data.get("day_index"):
+        return jsonify({"message": "Missing required logging data."}), 400
 
-    assignments = read_workout_assignments()
-    new_assignment = {
-        "id": f"wa_{uuid.uuid4()}",
-        "client_id": data["client_id"],
-        "template_id": data["template_id"],
-        "date": data["date"],
-        "logged_data": {}
+    workout_logs = read_workout_logs()
+    
+    new_log = {
+        "log_id": f"log_{uuid.uuid4()}",
+        "client_id": client_id,
+        "client_program_id": data["client_program_id"],
+        "day_index": data["day_index"],
+        "date_completed": datetime.now().isoformat(),
+        "notes": data.get("notes", ""),
+        "logged_exercises": data.get("logged_exercises", [])
     }
-    assignments.append(new_assignment)
-    write_workout_assignments(assignments)
-    return jsonify(new_assignment), 201
 
-@app.route("/api/client/<client_id>/workouts", methods=["GET"])
-def get_client_workouts(client_id):
-    """Gets all workout assignments for a specific client."""
-    assignments = read_workout_assignments()
-    client_assignments = [a for a in assignments if a["client_id"] == client_id]
-    return jsonify(client_assignments)
+    workout_logs.append(new_log)
+    write_workout_logs(workout_logs)
 
-@app.route("/api/workout-assignments/<assignment_id>/log", methods=["POST"])
-def log_workout(assignment_id):
-    """Logs a client's performance for a specific workout assignment."""
-    data = request.get_json()
-    if not data:
-        return jsonify({"message": "Invalid data!"}), 400
+    # Optional: Check for personal records and grant achievements
+    # This logic can be expanded based on the `achievements_service`
+    
+    return jsonify(new_log), 201
 
-    assignments = read_workout_assignments()
-    for assignment in assignments:
-        if assignment["id"] == assignment_id:
-            assignment["logged_data"] = data
-            write_workout_assignments(assignments)
-            return jsonify(assignment)
-
-    return jsonify({"message": "Workout assignment not found!"}), 404
 
 # --- Nutrition Endpoints ---
 
@@ -1014,56 +1175,38 @@ def delete_program(program_id):
 @app.route("/api/clients/<client_id>/assign-program", methods=["POST"])
 @protected
 def assign_program_to_client(client_id):
-    """Assigns a program to a client and creates all the workout assignments."""
+    """
+    Assigns a program template to a client, creating a new, editable
+    copy for that client.
+    """
     data = request.get_json()
-    program_id = data.get("program_id")
-    start_date_str = data.get("start_date") # Expects YYYY-MM-DD
+    template_id = data.get("template_id")
+    start_date_str = data.get("start_date")
 
-    if not all([program_id, start_date_str, client_id]):
-        return jsonify({"message": "Client ID, Program ID, and Start Date are required!"}), 400
+    if not all([template_id, start_date_str]):
+        return jsonify({"message": "Template ID and Start Date are required!"}), 400
 
-    programs = read_programs()
-    program = next((p for p in programs if p["id"] == program_id), None)
-    if not program:
-        return jsonify({"message": "Program not found!"}), 404
+    templates = read_workout_templates()
+    template = next((t for t in templates if t["id"] == template_id), None)
+    if not template:
+        return jsonify({"message": "Workout template not found!"}), 404
 
-    clients = read_clients()
-    client = next((c for c in clients if c["id"] == client_id), None)
-    if not client:
-        return jsonify({"message": "Client not found!"}), 404
-        
-    start_date = datetime.fromisoformat(start_date_str).date()
-    assignments = read_workout_assignments()
+    client_workouts = read_client_workouts()
     
-    # Store program assignment on the client
-    if "assigned_programs" not in client:
-        client["assigned_programs"] = []
-    client["assigned_programs"].append({
-        "program_id": program_id,
+    new_client_program = {
+        "id": f"cp_{uuid.uuid4()}",
+        "client_id": client_id,
+        "template_id": template_id,
+        "name": template["name"],
+        "description": template["description"],
         "start_date": start_date_str,
-        "assignment_id": f"pa_{uuid.uuid4()}"
-    })
-    write_clients(clients)
+        "days": template["days"] # This is a direct copy
+    }
 
-    # Create individual workout assignments
-    for week_index, week in enumerate(program.get("weeks", [])):
-        for day_index, day in enumerate(week.get("days", [])):
-            if day.get("template_id"):
-                assignment_date = start_date + timedelta(weeks=week_index, days=day_index)
-                new_assignment = {
-                    "id": f"wa_{uuid.uuid4()}",
-                    "client_id": client_id,
-                    "program_id": program_id,
-                    "template_id": day["template_id"],
-                    "date": assignment_date.isoformat(),
-                    "week": week_index + 1,
-                    "day": day_index + 1,
-                    "logged_data": {}
-                }
-                assignments.append(new_assignment)
+    client_workouts.append(new_client_program)
+    write_client_workouts(client_workouts)
 
-    write_workout_assignments(assignments)
-    return jsonify({"message": f"Program '{program['name']}' assigned to client {client['name']}."}), 201
+    return jsonify(new_client_program), 201
 
 @socketio.on('join')
 def on_join(data):

@@ -5,8 +5,18 @@ This repository contains the complete application template for a self-hosted coa
 ## Features
 
 - **Enhanced Client Dashboard:** Experience a smooth, mobile-app-like interface with intuitive navigation and subtle animations.
-- **Client Management:** Add, organize, and manage clients with ease.
-- **Workout Builder & Tracking:** Create custom workout plans and enable clients to log their progress.
+- **Comprehensive Client Onboarding**: A full-page onboarding form that combines personal details with a detailed assessment, providing a streamlined process for adding new clients.
+- **Client Management:** Add, organize, and manage clients with ease. Archive clients to hide them from the main view while retaining their data.
+- **Advanced Workout Builder**:
+    - **High-Performance Design**: Utilizes virtualization to smoothly handle large exercise libraries.
+    - **Dynamic Search**: Find exercises with an order-independent search that matches keywords in any sequence.
+    - **Customizable Themes**: Assign unique color themes to each workout day for better visual organization.
+    - **Inline Editing**: Edit exercise names directly within the builder and choose to save changes for the current template or create a new exercise.
+    - **Advanced Set Types**: Easily toggle dropsets and supersets for exercise groups.
+- **Program Builder**: Create multi-day workout programs and assign them to individual clients or groups.
+- **Group Management**: Organize clients into groups for easier management and bulk program assignment.
+- **Alerts Dashboard**: Stay on top of client activity, missed workouts, and other important notifications.
+- **Resource Hub**: A centralized location for uploading and sharing resources (e.g., PDFs, videos) with your clients.
 - **Nutrition Planning & Tracking:** Offer meal plans or allow clients to track their macros.
 - **Progress Visualization:** Track body stats, progress photos, and workout metrics with intuitive graphs.
 - **Real-time Communication:** Stay connected with your clients through an integrated chat feature.

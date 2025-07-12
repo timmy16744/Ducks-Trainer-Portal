@@ -102,11 +102,8 @@ def client_to_dict(client):
     }
 
 def read_clients():
-    session = get_session()
-    clients = session.query(Client).all()
-    result = [client_to_dict(c) for c in clients]
-    session.close()
-    return result
+    """Reads the clients from the JSON file."""
+    return read_json_file(CLIENTS_FILE)
 
 def write_clients(clients):
     session = get_session()
@@ -368,6 +365,144 @@ def get_client(client_id):
         if client["id"] == client_id:
             return jsonify(client)
     return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/stats", methods=["GET"])
+def get_client_stats(client_id):
+    """Gets a specific client's stats."""
+    # In a real application, these stats would be calculated based on actual data.
+    # For now, we'll return some mock data.
+    stats = {
+        "adherence": 85,
+        "progress": -2.5,
+        "streak": 14
+    }
+    return jsonify(stats)
+
+@app.route("/api/client/<client_id>/goals", methods=["GET"])
+def get_client_goals(client_id):
+    """Gets a specific client's goals."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            return jsonify(client.get("goals", []))
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/goals", methods=["POST"])
+def add_client_goal(client_id):
+    """Adds a new goal for a client."""
+    data = request.get_json()
+    if not data or not data.get("title") or not data.get("target"):
+        return jsonify({"message": "Title and target are required!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            if "goals" not in client:
+                client["goals"] = []
+            new_goal = {
+                "id": str(uuid.uuid4()),
+                "title": data["title"],
+                "target": data["target"],
+                "completed": False
+            }
+            client["goals"].append(new_goal)
+            write_clients(clients)
+            return jsonify(new_goal), 201
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/goals/<goal_id>", methods=["DELETE"])
+def delete_client_goal(client_id, goal_id):
+    """Deletes a goal for a client."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            if "goals" in client:
+                original_length = len(client["goals"])
+                client["goals"] = [g for g in client["goals"] if g["id"] != goal_id]
+                if len(client["goals"]) < original_length:
+                    write_clients(clients)
+                    return jsonify({"message": "Goal deleted successfully!"})
+    return jsonify({"message": "Goal not found!"}), 404
+
+@app.route("/api/client/<client_id>/notes", methods=["GET"])
+def get_client_notes(client_id):
+    """Gets a specific client's notes."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            return jsonify({"notes": client.get("notes", "")})
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/notes", methods=["PUT"])
+def update_client_notes(client_id):
+    """Updates a specific client's notes."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            client["notes"] = data.get("notes", "")
+            write_clients(clients)
+            return jsonify(client)
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/assessment", methods=["GET"])
+def get_client_assessment(client_id):
+    """Gets a specific client's assessment."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            return jsonify({"assessment": client.get("assessment", {})})
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/assessment", methods=["PUT"])
+def update_client_assessment(client_id):
+    """Updates a specific client's assessment."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            client["assessment"] = data.get("assessment", {})
+            write_clients(clients)
+            return jsonify(client)
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/reports", methods=["GET"])
+def get_client_reports(client_id):
+    """Gets a specific client's report data."""
+    # In a real application, this data would be calculated based on actual data.
+    # For now, we'll return some mock data.
+    report_data = {
+        "workout_volume": [
+            {"name": "Week 1", "volume": 4000},
+            {"name": "Week 2", "volume": 3000},
+            {"name": "Week 3", "volume": 2000},
+            {"name": "Week 4", "volume": 2780},
+        ]
+    }
+    return jsonify(report_data)
+
+@app.route("/api/client/<client_id>/logs", methods=["GET"])
+def get_client_logs(client_id):
+    """Gets a specific client's activity logs."""
+    # In a real application, this data would be aggregated from various sources.
+    # For now, we'll return some mock data.
+    logs = {
+        "logs": [
+            {"id": 1, "type": "workout", "time": "2 hours ago"},
+            {"id": 2, "type": "water", "time": "3 hours ago"},
+            {"id": 3, "type": "steps", "time": "4 hours ago"},
+        ]
+    }
+    return jsonify(logs)
 
 @app.route("/api/client/<client_id>/today", methods=["GET"])
 def get_client_today(client_id):

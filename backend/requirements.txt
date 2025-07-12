@@ -3,3 +3,5 @@ flask-cors
 requests
 schedule
 python-dateutil
+flask-caching
+sqlalchemy

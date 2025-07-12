@@ -2,22 +2,31 @@ import os
 import uuid
 import json
 from datetime import datetime
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, make_response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room
 from functools import wraps
 from wger_service import WgerService
 from achievements_service import check_for_new_pbs, add_achievements_to_client
 from exercisedb_service import sync_exercises_from_exercisedb
+from flask_caching import Cache
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, Boolean
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
 app = Flask(__name__)
 # More robust CORS configuration
-CORS(app, supports_credentials=True, resources={r"/api/*": {
-    "origins": "http://localhost:3000",
-    "allow_headers": ["Authorization", "Content-Type"],
-    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-}})
-socketio = SocketIO(app, cors_allowed_origins="http://localhost:3000")
+# Allow multiple origins, including localhost and any ngrok tunnel
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://*.ngrok-free.app", # Allows any free-tier ngrok URL
+    "https://*.ngrok.io" # Original ngrok domain
+]
+
+# Replace previous CORS setup line with permissive for demo
+CORS(app, supports_credentials=True, resources={r"/api/*": {"origins": allowed_origins}})
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # --- Configuration ---
 # In a real application, this would be a more secure way to handle secrets
@@ -38,6 +47,8 @@ WORKOUT_LOGS_FILE = os.path.join("database", "workout_logs.json")
 # Initialize WGER service
 wger_service = WgerService(WGER_API_KEY)
 
+cache = Cache(app, config={'CACHE_TYPE': 'SimpleCache'})
+
 # --- Helper Functions ---
 
 def read_json_file(file_path):
@@ -50,14 +61,69 @@ def write_json_file(file_path, data):
     with open(file_path, "w") as f:
         json.dump(data, f, indent=4)
 
+DATABASE_URL = 'sqlite:///database/database.sqlite'
+engine = create_engine(DATABASE_URL)
+Base = declarative_base()
+Session = sessionmaker(bind=engine)
+
+class Client(Base):
+    __tablename__ = 'clients'
+    id = Column(String, primary_key=True)
+    name = Column(String)
+    email = Column(String)
+    unique_url = Column(String)
+    features = Column(Text)
+    points = Column(Integer, default=0)
+    daily_metrics = Column(Text)  # JSON string
+    archived = Column(Boolean, default=False)  # Example additional field
+    # Add more fields as needed from clients.json
+
+class Exercise(Base):
+    __tablename__ = 'exercises'
+    id = Column(String, primary_key=True)
+    name = Column(String)
+    # Add other fields...
+
+Base.metadata.create_all(engine)
+
+def get_session():
+    return Session()
+
+def client_to_dict(client):
+    return {
+        'id': client.id,
+        'name': client.name,
+        'email': client.email,
+        'unique_url': client.unique_url,
+        'features': json.loads(client.features) if client.features else {},
+        'points': client.points,
+        'daily_metrics': json.loads(client.daily_metrics) if client.daily_metrics else {},
+        'archived': client.archived
+    }
+
 def read_clients():
-    """Reads the clients from the JSON file."""
-    data = read_json_file(CLIENTS_FILE)
-    return data if isinstance(data, list) else []
+    session = get_session()
+    clients = session.query(Client).all()
+    result = [client_to_dict(c) for c in clients]
+    session.close()
+    return result
 
 def write_clients(clients):
-    """Writes the clients to the JSON file."""
-    write_json_file(CLIENTS_FILE, clients)
+    session = get_session()
+    for data in clients:
+        client = session.query(Client).filter_by(id=data['id']).first()
+        if not client:
+            client = Client(id=data['id'])
+        client.name = data.get('name')
+        client.email = data.get('email')
+        client.unique_url = data.get('unique_url')
+        client.features = json.dumps(data.get('features', {}))
+        client.points = data.get('points', 0)
+        client.daily_metrics = json.dumps(data.get('daily_metrics', {}))
+        client.archived = data.get('archived', False)
+        session.add(client)
+    session.commit()
+    session.close()
 
 def read_exercises():
     """Reads the exercises from the JSON file."""
@@ -183,25 +249,28 @@ def add_client():
     if not data or not data.get("name") or not data.get("email"):
         return jsonify({"message": "Name and email are required!"}), 400
 
-    clients = read_clients()
     client_id = str(uuid.uuid4())
-    new_client = {
-        "id": client_id,
-        "name": data["name"],
-        "email": data["email"],
-        "unique_url": f"http://localhost:3000/client/{client_id}",
-        "features": {
+    new_client_obj = Client(
+        id=client_id,
+        name=data['name'],
+        email=data['email'],
+        unique_url=f"http://localhost:3000/client/{client_id}",
+        features=json.dumps({
             "gamification": False,
             "calendar": False,
             "workout_logging": False,
             "nutrition_tracker": False,
             "nutrition_mode": "tracker",
-        },
-        "points": 0
-    }
-    clients.append(new_client)
-    write_clients(clients)
-    return jsonify(new_client), 201
+        }),
+        points=0,
+        daily_metrics=json.dumps({}),
+        archived=False
+    )
+    session = get_session()
+    session.add(new_client_obj)
+    session.commit()
+    session.close()
+    return jsonify(client_to_dict(new_client_obj)), 201
 
 @app.route("/api/clients", methods=["GET"])
 @protected
@@ -211,17 +280,22 @@ def get_clients():
     Accepts an 'status' query parameter to filter by 'active' or 'archived'.
     Defaults to 'active'.
     """
-    clients = read_clients()
-    status = request.args.get('status', 'active')
+    try:
+        clients = read_clients()
+        status = request.args.get('status', 'active')
 
-    if status == 'active':
-        filtered_clients = [c for c in clients if not c.get('archived')]
-    elif status == 'archived':
-        filtered_clients = [c for c in clients if c.get('archived')]
-    else:
-        filtered_clients = clients
+        if status == 'active':
+            filtered_clients = [c for c in clients if not c.get('archived', False)]
+        elif status == 'archived':
+            filtered_clients = [c for c in clients if c.get('archived', False)]
+        else:
+            filtered_clients = clients
 
-    return jsonify(filtered_clients)
+        return jsonify(filtered_clients)
+    except Exception as e:
+        response = make_response(jsonify({"error": str(e)}), 500)
+        response.headers['Access-Control-Allow-Origin'] = 'http://localhost:3000'
+        return response
 
 @app.route("/api/workout-assignments", methods=["GET"])
 @protected
@@ -387,10 +461,22 @@ def complete_task(client_id):
 # --- Exercise Library Endpoints ---
 
 @app.route("/api/exercises", methods=["GET"])
+@cache.cached(timeout=3600, key_prefix='exercises_all')
+@protected
 def get_exercises():
-    """Lists all exercises in the library."""
     exercises = read_exercises()
     return jsonify(exercises)
+
+@app.route("/api/client/<client_id>/exercises", methods=["GET"])
+def get_client_exercises(client_id):
+    assignments = read_json_file(WORKOUT_ASSIGNMENTS_FILE)
+    client_assignments = [a for a in assignments if a['client_id'] == client_id]
+    all_exercises = read_exercises()
+    assigned_exercise_ids = set()
+    for assignment in client_assignments:
+        assigned_exercise_ids.update(assignment.get('exercises', []))
+    filtered_exercises = [ex for ex in all_exercises if ex['id'] in assigned_exercise_ids]
+    return jsonify(filtered_exercises)
 
 @app.route("/api/exercises", methods=["POST"])
 @protected
@@ -1043,7 +1129,7 @@ def remove_client_from_group(group_id, client_id):
 def check_alerts():
     """Checks for client non-adherence and creates alerts."""
     clients = read_clients()
-    workouts = read_workouts()
+    workouts = read_workout_logs() # Changed from read_workouts() to read_workout_logs()
     alerts = read_alerts()
     
     for client in clients:

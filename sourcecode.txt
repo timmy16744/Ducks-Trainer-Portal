@@ -1,0 +1,3951 @@
+==================================================
+File: backend/app.py
+==================================================
+import os
+import uuid
+import json
+from datetime import datetime
+from flask import Flask, jsonify, request, send_from_directory, make_response
+from flask_cors import CORS
+from flask_socketio import SocketIO, emit, join_room
+from functools import wraps
+from wger_service import WgerService
+from achievements_service import check_for_new_pbs, add_achievements_to_client
+from exercisedb_service import sync_exercises_from_exercisedb
+from flask_caching import Cache
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, Boolean
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+app = Flask(__name__)
+# More robust CORS configuration
+# Allow multiple origins, including localhost and any ngrok tunnel
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+]
+
+# Replace previous CORS setup line with permissive for demo
+CORS(app, supports_credentials=True, resources={r"/api/*": {"origins": allowed_origins}})
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+# --- Configuration ---
+# In a real application, this would be a more secure way to handle secrets
+TRAINER_PASSWORD = os.environ.get("TRAINER_PASSWORD", "password")
+WGER_API_KEY = os.environ.get("WGER_API_KEY", "397683a6bb806f7e4c2d1c0b5a210a8a3f07b442")
+CLIENTS_FILE = os.path.join("database", "clients.json")
+EXERCISES_FILE = os.path.join("database", "exercises.json")
+WORKOUT_TEMPLATES_FILE = os.path.join("database", "workout_templates.json")
+WORKOUT_ASSIGNMENTS_FILE = os.path.join("database", "workout_assignments.json")
+GROUPS_FILE = os.path.join("database", "groups.json")
+ALERTS_FILE = os.path.join("database", "alerts.json")
+PROGRAMS_FILE = os.path.join("database", "programs.json")
+EXERCISE_HISTORY_FILE = os.path.join("database", "exercise_history.json")
+PERSONAL_RECORDS_FILE = os.path.join("database", "personal_records.json")
+CLIENT_WORKOUTS_FILE = os.path.join("database", "client_workouts.json")
+WORKOUT_LOGS_FILE = os.path.join("database", "workout_logs.json")
+
+# Initialize WGER service
+wger_service = WgerService(WGER_API_KEY)
+
+cache = Cache(app, config={'CACHE_TYPE': 'SimpleCache'})
+
+# --- Helper Functions ---
+
+def read_json_file(file_path):
+    if not os.path.exists(file_path):
+        return {}
+    with open(file_path, "r") as f:
+        return json.load(f)
+
+def write_json_file(file_path, data):
+    with open(file_path, "w") as f:
+        json.dump(data, f, indent=4)
+
+DATABASE_URL = 'sqlite:///database/database.sqlite'
+engine = create_engine(DATABASE_URL)
+Base = declarative_base()
+Session = sessionmaker(bind=engine)
+
+class Client(Base):
+    __tablename__ = 'clients'
+    id = Column(String, primary_key=True)
+    name = Column(String)
+    email = Column(String)
+    unique_url = Column(String)
+    features = Column(Text)
+    points = Column(Integer, default=0)
+    daily_metrics = Column(Text)  # JSON string
+    archived = Column(Boolean, default=False)  # Example additional field
+    # Add more fields as needed from clients.json
+
+class Exercise(Base):
+    __tablename__ = 'exercises'
+    id = Column(String, primary_key=True)
+    name = Column(String)
+    # Add other fields...
+
+Base.metadata.create_all(engine)
+
+def get_session():
+    return Session()
+
+def client_to_dict(client):
+    return {
+        'id': client.id,
+        'name': client.name,
+        'email': client.email,
+        'unique_url': client.unique_url,
+        'features': json.loads(client.features) if client.features else {},
+        'points': client.points,
+        'daily_metrics': json.loads(client.daily_metrics) if client.daily_metrics else {},
+        'archived': client.archived
+    }
+
+def read_clients():
+    """Reads the clients from the JSON file."""
+    return read_json_file(CLIENTS_FILE)
+
+def write_clients(clients):
+    session = get_session()
+    for data in clients:
+        client = session.query(Client).filter_by(id=data['id']).first()
+        if not client:
+            client = Client(id=data['id'])
+        client.name = data.get('name')
+        client.email = data.get('email')
+        client.unique_url = data.get('unique_url')
+        client.features = json.dumps(data.get('features', {}))
+        client.points = data.get('points', 0)
+        client.daily_metrics = json.dumps(data.get('daily_metrics', {}))
+        client.archived = data.get('archived', False)
+        session.add(client)
+    session.commit()
+    session.close()
+
+def read_exercises():
+    """Reads the exercises from the JSON file."""
+    data = read_json_file(EXERCISES_FILE)
+    # Handle both formats: a list of exercises, or an object with an 'exercises' key
+    if isinstance(data, list):
+        return data
+    return data.get('exercises', [])
+
+def write_exercises(exercises):
+    """Writes the exercises to the JSON file."""
+    write_json_file(EXERCISES_FILE, exercises)
+
+def read_workout_templates():
+    """Reads the workout templates from the JSON file."""
+    data = read_json_file(WORKOUT_TEMPLATES_FILE)
+    return data if isinstance(data, list) else []
+
+def write_workout_templates(templates):
+    """Writes the workout templates to the JSON file."""
+    write_json_file(WORKOUT_TEMPLATES_FILE, templates)
+
+def read_workout_assignments():
+    """Reads the workout assignments from the JSON file."""
+    data = read_json_file(WORKOUT_ASSIGNMENTS_FILE)
+    return data if isinstance(data, list) else []
+
+def write_workout_assignments(assignments):
+    """Writes the workout assignments to the JSON file."""
+    write_json_file(WORKOUT_ASSIGNMENTS_FILE, assignments)
+
+def read_groups():
+    """Reads the groups from the JSON file."""
+    data = read_json_file(GROUPS_FILE)
+    return data if isinstance(data, list) else []
+
+def write_groups(groups):
+    """Writes the groups to the JSON file."""
+    write_json_file(GROUPS_FILE, groups)
+
+def read_alerts():
+    """Reads the alerts from the JSON file."""
+    data = read_json_file(ALERTS_FILE)
+    return data if isinstance(data, list) else []
+
+def write_alerts(alerts):
+    """Writes the alerts to the JSON file."""
+    write_json_file(ALERTS_FILE, alerts)
+
+def read_programs():
+    """Reads the programs from the JSON file."""
+    data = read_json_file(PROGRAMS_FILE)
+    return data if isinstance(data, list) else []
+
+def write_programs(programs):
+    """Writes the programs to the JSON file."""
+    write_json_file(PROGRAMS_FILE, programs)
+
+def read_exercise_history():
+    """Reads the exercise history from the JSON file."""
+    data = read_json_file(EXERCISE_HISTORY_FILE)
+    return data if isinstance(data, list) else []
+
+def write_exercise_history(history):
+    """Writes the exercise history to the JSON file."""
+    write_json_file(EXERCISE_HISTORY_FILE, history)
+
+def read_personal_records():
+    """Reads the personal records from the JSON file."""
+    data = read_json_file(PERSONAL_RECORDS_FILE)
+    return data if isinstance(data, list) else []
+
+def write_personal_records(records):
+    """Writes the personal records to the JSON file."""
+    write_json_file(PERSONAL_RECORDS_FILE, records)
+
+def read_client_workouts():
+    """Reads the client workouts from the JSON file."""
+    data = read_json_file(CLIENT_WORKOUTS_FILE)
+    return data if isinstance(data, list) else []
+
+def write_client_workouts(workouts):
+    """Writes the client workouts to the JSON file."""
+    write_json_file(CLIENT_WORKOUTS_FILE, workouts)
+
+def read_workout_logs():
+    """Reads the workout logs from the JSON file."""
+    data = read_json_file(WORKOUT_LOGS_FILE)
+    return data if isinstance(data, list) else []
+
+def write_workout_logs(logs):
+    """Writes the workout logs to the JSON file."""
+    write_json_file(WORKOUT_LOGS_FILE, logs)
+
+# --- Decorators ---
+
+def protected(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth = request.authorization
+        if not auth or not (auth.username == "trainer" and auth.password == TRAINER_PASSWORD):
+            return jsonify({"message": "Authentication required!"}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+# --- API Endpoints ---
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    """Secure endpoint for trainer login."""
+    data = request.get_json()
+    if not data or not data.get("username") or not data.get("password"):
+        return jsonify({"message": "Invalid credentials!"}), 400
+    if data["username"] == "trainer" and data["password"] == TRAINER_PASSWORD:
+        return jsonify({"message": "Login successful!"})
+    return jsonify({"message": "Invalid credentials!"}), 401
+
+@app.route("/api/clients", methods=["POST"])
+@protected
+def add_client():
+    """Adds a new client."""
+    data = request.get_json()
+    if not data or not data.get("name") or not data.get("email"):
+        return jsonify({"message": "Name and email are required!"}), 400
+
+    client_id = str(uuid.uuid4())
+    new_client_obj = Client(
+        id=client_id,
+        name=data['name'],
+        email=data['email'],
+        unique_url=f"http://localhost:3000/client/{client_id}",
+        features=json.dumps({
+            "gamification": False,
+            "calendar": False,
+            "workout_logging": False,
+            "nutrition_tracker": False,
+            "nutrition_mode": "tracker",
+        }),
+        points=0,
+        daily_metrics=json.dumps({}),
+        archived=False
+    )
+    session = get_session()
+    session.add(new_client_obj)
+    session.commit()
+    session.close()
+    return jsonify(client_to_dict(new_client_obj)), 201
+
+@app.route("/api/clients", methods=["GET"])
+@protected
+def get_clients():
+    """
+    Lists all managed clients.
+    Accepts an 'status' query parameter to filter by 'active' or 'archived'.
+    Defaults to 'active'.
+    """
+    try:
+        clients = read_clients()
+        status = request.args.get('status', 'active')
+
+        if status == 'active':
+            filtered_clients = [c for c in clients if not c.get('archived', False)]
+        elif status == 'archived':
+            filtered_clients = [c for c in clients if c.get('archived', False)]
+        else:
+            filtered_clients = clients
+
+        return jsonify(filtered_clients)
+    except Exception as e:
+        response = make_response(jsonify({"error": str(e)}), 500)
+        response.headers['Access-Control-Allow-Origin'] = 'http://localhost:3000'
+        return response
+
+@app.route("/api/workout-assignments", methods=["GET"])
+@protected
+def get_workout_assignments():
+    """
+    Lists all workout assignments. Can be filtered by client_id.
+    """
+    assignments = read_workout_assignments()
+    client_id = request.args.get('client_id')
+
+    if client_id:
+        assignments = [a for a in assignments if a.get('client_id') == client_id]
+
+    return jsonify(assignments)
+
+@app.route("/api/clients/<client_id>", methods=["PUT"])
+@protected
+def update_client(client_id):
+    """Updates a client's details."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            client["name"] = data.get("name", client["name"])
+            client["email"] = data.get("email", client["email"])
+            write_clients(clients)
+            return jsonify(client)
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/clients/<client_id>/archive", methods=["PUT"])
+@protected
+def archive_client(client_id):
+    """Toggles the archive status of a client."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            client["archived"] = not client.get("archived", False)
+            write_clients(clients)
+            return jsonify(client)
+
+    return jsonify({"message": "Client not found!"}), 404
+
+
+@app.route("/api/clients/<client_id>/features", methods=["PUT"])
+@protected
+def update_client_features(client_id):
+    """Updates the feature toggles for a specific client."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            client["features"] = data
+            write_clients(clients)
+            return jsonify(client)
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>", methods=["GET"])
+def get_client(client_id):
+    """Gets a specific client's data."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            return jsonify(client)
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/stats", methods=["GET"])
+def get_client_stats(client_id):
+    """Gets a specific client's stats."""
+    # In a real application, these stats would be calculated based on actual data.
+    # For now, we'll return some mock data.
+    stats = {
+        "adherence": 85,
+        "progress": -2.5,
+        "streak": 14
+    }
+    return jsonify(stats)
+
+@app.route("/api/client/<client_id>/goals", methods=["GET"])
+def get_client_goals(client_id):
+    """Gets a specific client's goals."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            return jsonify(client.get("goals", []))
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/goals", methods=["POST"])
+def add_client_goal(client_id):
+    """Adds a new goal for a client."""
+    data = request.get_json()
+    if not data or not data.get("title") or not data.get("target"):
+        return jsonify({"message": "Title and target are required!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            if "goals" not in client:
+                client["goals"] = []
+            new_goal = {
+                "id": str(uuid.uuid4()),
+                "title": data["title"],
+                "target": data["target"],
+                "completed": False
+            }
+            client["goals"].append(new_goal)
+            write_clients(clients)
+            return jsonify(new_goal), 201
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/goals/<goal_id>", methods=["DELETE"])
+def delete_client_goal(client_id, goal_id):
+    """Deletes a goal for a client."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            if "goals" in client:
+                original_length = len(client["goals"])
+                client["goals"] = [g for g in client["goals"] if g["id"] != goal_id]
+                if len(client["goals"]) < original_length:
+                    write_clients(clients)
+                    return jsonify({"message": "Goal deleted successfully!"})
+    return jsonify({"message": "Goal not found!"}), 404
+
+@app.route("/api/client/<client_id>/notes", methods=["GET"])
+def get_client_notes(client_id):
+    """Gets a specific client's notes."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            return jsonify({"notes": client.get("notes", "")})
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/notes", methods=["PUT"])
+def update_client_notes(client_id):
+    """Updates a specific client's notes."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            client["notes"] = data.get("notes", "")
+            write_clients(clients)
+            return jsonify(client)
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/assessment", methods=["GET"])
+def get_client_assessment(client_id):
+    """Gets a specific client's assessment."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            return jsonify({"assessment": client.get("assessment", {})})
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/assessment", methods=["PUT"])
+def update_client_assessment(client_id):
+    """Updates a specific client's assessment."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            client["assessment"] = data.get("assessment", {})
+            write_clients(clients)
+            return jsonify(client)
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/client/<client_id>/reports", methods=["GET"])
+def get_client_reports(client_id):
+    """Gets a specific client's report data."""
+    # In a real application, this data would be calculated based on actual data.
+    # For now, we'll return some mock data.
+    report_data = {
+        "workout_volume": [
+            {"name": "Week 1", "volume": 4000},
+            {"name": "Week 2", "volume": 3000},
+            {"name": "Week 3", "volume": 2000},
+            {"name": "Week 4", "volume": 2780},
+        ]
+    }
+    return jsonify(report_data)
+
+@app.route("/api/client/<client_id>/logs", methods=["GET"])
+def get_client_logs(client_id):
+    """Gets a specific client's activity logs."""
+    # In a real application, this data would be aggregated from various sources.
+    # For now, we'll return some mock data.
+    logs = {
+        "logs": [
+            {"id": 1, "type": "workout", "time": "2 hours ago"},
+            {"id": 2, "type": "water", "time": "3 hours ago"},
+            {"id": 3, "type": "steps", "time": "4 hours ago"},
+        ]
+    }
+    return jsonify(logs)
+
+@app.route("/api/client/<client_id>/today", methods=["GET"])
+def get_client_today(client_id):
+    """Gets all of a client's tasks for the current day."""
+    today = datetime.now().date()
+    
+    # Get workout for today
+    assignments = read_workout_assignments()
+    todays_workout = next((a for a in assignments if a["client_id"] == client_id and a["date"] == today.isoformat()), None)
+
+    # Get check-in for today
+    clients = read_clients()
+    client = next((c for c in clients if c["id"] == client_id), None)
+    todays_checkin = None
+    if client and "daily_checkins" in client:
+        todays_checkin = next((c for c in client["daily_checkins"] if c["date"] == today.isoformat()), None)
+
+    # --- NEW: Get daily metrics for today ---
+    todays_metrics = { "water_glasses": 0, "steps": 0 }
+    if client and "daily_metrics" in client and today.isoformat() in client["daily_metrics"]:
+        todays_metrics = client["daily_metrics"][today.isoformat()]
+    # --- END NEW ---
+
+    response = {
+        "workout": todays_workout,
+        "check_in": todays_checkin,
+        "metrics": todays_metrics,
+         "macros": client.get("macros", {}),
+         "achievements": client.get("achievements", [])
+    }
+    return jsonify(response)
+
+@app.route("/api/client/<client_id>/log/<metric>", methods=["POST"])
+def log_daily_metric(client_id, metric):
+    """
+    Increments a daily metric (e.g., water, steps) for a client.
+    Expects a JSON body with an 'amount' field to increment by.
+    """
+    data = request.get_json()
+    amount = data.get("amount")
+
+    if amount is None:
+        return jsonify({"message": "Missing 'amount' in request body"}), 400
+    
+    if metric not in ["water", "steps"]:
+        return jsonify({"message": f"Invalid metric: {metric}"}), 400
+
+    clients = read_clients()
+    client = next((c for c in clients if c["id"] == client_id), None)
+
+    if not client:
+        return jsonify({"message": "Client not found"}), 404
+
+    today_str = datetime.now().date().isoformat()
+    metric_key_map = {
+        "water": "water_glasses",
+        "steps": "steps"
+    }
+    metric_key = metric_key_map[metric]
+
+    # Initialize daily_metrics if it doesn't exist
+    if "daily_metrics" not in client:
+        client["daily_metrics"] = {}
+    
+    # Initialize today's metrics if they don't exist
+    if today_str not in client["daily_metrics"]:
+        client["daily_metrics"][today_str] = {
+            "water_glasses": 0,
+            "steps": 0
+        }
+
+    # Increment the metric
+    client["daily_metrics"][today_str][metric_key] = client["daily_metrics"][today_str].get(metric_key, 0) + amount
+    
+    write_clients(clients)
+    
+    # Return the updated metrics for today
+    return jsonify(client["daily_metrics"][today_str])
+
+@app.route("/api/client/<client_id>/complete_task", methods=["POST"])
+def complete_task(client_id):
+    """Marks a task as complete for a client."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            client["points"] += 10
+            write_clients(clients)
+            return jsonify(client)
+    return jsonify({"message": "Client not found!"}), 404
+
+# --- Exercise Library Endpoints ---
+
+@app.route("/api/exercises", methods=["GET"])
+@cache.cached(timeout=3600, key_prefix='exercises_all')
+@protected
+def get_exercises():
+    exercises = read_exercises()
+    return jsonify(exercises)
+
+@app.route("/api/client/<client_id>/exercises", methods=["GET"])
+def get_client_exercises(client_id):
+    assignments = read_json_file(WORKOUT_ASSIGNMENTS_FILE)
+    client_assignments = [a for a in assignments if a['client_id'] == client_id]
+    all_exercises = read_exercises()
+    assigned_exercise_ids = set()
+    for assignment in client_assignments:
+        assigned_exercise_ids.update(assignment.get('exercises', []))
+    filtered_exercises = [ex for ex in all_exercises if ex['id'] in assigned_exercise_ids]
+    return jsonify(filtered_exercises)
+
+@app.route("/api/exercises", methods=["POST"])
+@protected
+def add_exercise():
+    """Adds a new exercise to the library."""
+    data = request.get_json()
+    if not data or not data.get("name") or not data.get("instructions"):
+        return jsonify({"message": "Name and instructions are required!"}), 400
+
+    exercises = read_exercises()
+    new_exercise = {
+        "id": f"exr_{uuid.uuid4()}",
+        "name": data["name"],
+        "instructions": data["instructions"],
+        "mediaUrl": data.get("mediaUrl", "")
+    }
+    
+    if 'exercises' not in exercises:
+        exercises['exercises'] = []
+
+    exercises['exercises'].append(new_exercise)
+    write_exercises(exercises)
+    return jsonify({"exercise": new_exercise}), 201
+
+# --- WGER Integration Endpoints ---
+
+@app.route("/api/wger/sync", methods=["POST"])
+@protected
+def sync_wger_exercises():
+    try:
+        sync_result = wger_service.sync_exercises()
+        if sync_result.get("status") == "success":
+            return jsonify({"message": sync_result["message"]}), 200
+        else:
+            return jsonify({"message": sync_result["message"]}), 500
+    except Exception as e:
+        app.logger.error(f"Error during WGER sync: {e}")
+        return jsonify({"message": f"Internal server error during WGER sync: {str(e)}"}), 500
+
+@app.route("/api/wger/status", methods=["GET"])
+@protected
+def get_wger_sync_status():
+    """Gets the current WGER sync status."""
+    try:
+        status = wger_service.get_sync_status()
+        return jsonify(status), 200
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+@app.route("/api/exercises/enhanced", methods=["GET"])
+def get_enhanced_exercises():
+    """Gets exercises with enhanced WGER data including categories, muscles, and equipment."""
+    try:
+        with open(EXERCISES_FILE, 'r') as f:
+            data = json.load(f)
+        
+        # Return the full enhanced structure
+        return jsonify({
+            "exercises": data.get("exercises", []),
+            "categories": data.get("categories", []),
+            "muscles": data.get("muscles", []),
+            "equipment": data.get("equipment", []),
+            "sync_info": data.get("sync_info", {})
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ExerciseDB API sync endpoint
+@app.route('/api/exercisedb/sync', methods=['POST'])
+def sync_exercisedb_data():
+    try:
+        sync_result = sync_exercises_from_exercisedb()
+        if sync_result.get("status") == "success":
+            return jsonify({"message": sync_result["message"]}), 200
+        else:
+            return jsonify({"message": sync_result["message"]}), 500
+    except Exception as e:
+        app.logger.error(f"Error during ExerciseDB sync: {e}")
+        return jsonify({"message": f"Internal server error during ExerciseDB sync: {str(e)}"}), 500
+
+# --- Workout Template Endpoints ---
+
+@app.route("/api/workout-templates", methods=["POST"])
+@protected
+def create_workout_template():
+    """Creates a new workout template."""
+    data = request.get_json()
+    if not data or not data.get("name") or not data.get("exercises"):
+        return jsonify({"message": "Name and exercises are required!"}), 400
+
+    templates = read_workout_templates()
+    new_template = {
+        "id": f"wt_{uuid.uuid4()}",
+        "name": data["name"],
+        "description": data.get("description", ""),
+        "exercises": data["exercises"]
+    }
+    templates.append(new_template)
+    write_workout_templates(templates)
+    return jsonify(new_template), 201
+
+@app.route("/api/workout-templates", methods=["GET"])
+@protected
+def get_workout_templates():
+    """Lists all workout templates."""
+    templates = read_workout_templates()
+    return jsonify(templates)
+
+@app.route("/api/workout-templates/<template_id>", methods=["GET"])
+@protected
+def get_workout_template(template_id):
+    """Gets a single workout template."""
+    templates = read_workout_templates()
+    template = next((t for t in templates if t["id"] == template_id), None)
+    if template:
+        return jsonify(template)
+    return jsonify({"message": "Template not found!"}), 404
+
+@app.route("/api/workout-templates/<template_id>", methods=["PUT"])
+@protected
+def update_workout_template(template_id):
+    """Updates a workout template."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    templates = read_workout_templates()
+    for template in templates:
+        if template["id"] == template_id:
+            template["name"] = data.get("name", template["name"])
+            template["description"] = data.get("description", template["description"])
+            template["exercises"] = data.get("exercises", template["exercises"])
+            write_workout_templates(templates)
+            return jsonify(template)
+
+    return jsonify({"message": "Template not found!"}), 404
+
+@app.route("/api/workout-templates/<template_id>", methods=["DELETE"])
+@protected
+def delete_workout_template(template_id):
+    """Deletes a workout template."""
+    templates = read_workout_templates()
+    updated_templates = [t for t in templates if t["id"] != template_id]
+    
+    if len(updated_templates) == len(templates):
+        return jsonify({"message": "Template not found!"}), 404
+
+    write_workout_templates(updated_templates)
+    return jsonify({"message": "Template deleted successfully!"})
+
+@app.route("/api/workout-templates/<template_id>/duplicate", methods=["POST"])
+@protected
+def duplicate_workout_template(template_id):
+    """Duplicates a workout template."""
+    templates = read_workout_templates()
+    template_to_duplicate = next((t for t in templates if t["id"] == template_id), None)
+
+    if not template_to_duplicate:
+        return jsonify({"message": "Template not found!"}), 404
+
+    new_template = {
+        "id": f"wt_{uuid.uuid4()}",
+        "name": f"{template_to_duplicate['name']} (Copy)",
+        "description": template_to_duplicate.get("description", ""),
+        "notes": template_to_duplicate.get("notes", ""),
+        "tags": template_to_duplicate.get("tags", []),
+        "exercises": template_to_duplicate["exercises"]
+    }
+    templates.append(new_template)
+    write_workout_templates(templates)
+    return jsonify(new_template), 201
+
+@app.route("/api/client/<client_id>/program", methods=["GET"])
+def get_client_program(client_id):
+    """
+    Gets the client's currently assigned program and enriches it with
+    the last logged data for each exercise.
+    """
+    client_workouts = read_client_workouts()
+    workout_logs = read_workout_logs()
+
+    # Find the client's most recent program assignment
+    client_program = next((p for p in reversed(client_workouts) if p["client_id"] == client_id), None)
+
+    if not client_program:
+        return jsonify({"message": "No program assigned to this client."}), 404
+
+    # For each exercise in the program, find the last time it was logged
+    for day in client_program.get("days", []):
+        for group in day.get("groups", []):
+            for exercise in group.get("exercises", []):
+                # Find the most recent log for this specific exercise by this client
+                last_log = next((log for log in reversed(workout_logs) 
+                                 if log["client_id"] == client_id and log["exercise_id"] == exercise["exercise_id"]), None)
+                
+                if last_log:
+                    exercise["last_session"] = last_log["logged_sets"]
+
+    return jsonify(client_program)
+
+@app.route("/api/client/<client_id>/program/log", methods=["POST"])
+def log_client_workout(client_id):
+    """
+    Logs a completed workout session for a client.
+    """
+    data = request.get_json()
+    if not data or not data.get("client_program_id") or not data.get("day_index"):
+        return jsonify({"message": "Missing required logging data."}), 400
+
+    workout_logs = read_workout_logs()
+    
+    new_log = {
+        "log_id": f"log_{uuid.uuid4()}",
+        "client_id": client_id,
+        "client_program_id": data["client_program_id"],
+        "day_index": data["day_index"],
+        "date_completed": datetime.now().isoformat(),
+        "notes": data.get("notes", ""),
+        "logged_exercises": data.get("logged_exercises", [])
+    }
+
+    workout_logs.append(new_log)
+    write_workout_logs(workout_logs)
+
+    # Optional: Check for personal records and grant achievements
+    # This logic can be expanded based on the `achievements_service`
+    
+    return jsonify(new_log), 201
+
+
+# --- Nutrition Endpoints ---
+
+RECIPES_FILE = os.path.join("database", "recipes.json")
+
+def read_recipes():
+    """Reads the recipes from the JSON file."""
+    return read_json_file(RECIPES_FILE)
+
+@app.route("/api/recipes", methods=["GET"])
+def get_recipes():
+    """Lists all recipes in the library."""
+    recipes = read_recipes()
+    return jsonify(recipes)
+
+@app.route("/api/clients/<client_id>/meal-plan", methods=["POST"])
+@protected
+def assign_meal_plan(client_id):
+    """Assigns a meal plan to a client."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            client["meal_plan"] = data
+            write_clients(clients)
+            return jsonify(client)
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/clients/<client_id>/nutrition-log", methods=["POST"])
+def log_nutrition(client_id):
+    """Logs a client's nutrition data."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            if "nutrition_log" not in client:
+                client["nutrition_log"] = []
+            client["nutrition_log"].append(data)
+            write_clients(clients)
+            return jsonify(client)
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/clients/<client_id>/body-stats", methods=["GET"])
+def get_body_stats(client_id):
+    """Gets a client's body statistics."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            return jsonify(client.get("body_stats", []))
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/clients/<client_id>/body-stats", methods=["POST"])
+def add_body_stat(client_id):
+    """Adds a new body statistic for a client."""
+    data = request.get_json()
+    if not data or not data.get("date") or not data.get("weight"):
+        return jsonify({"message": "Date and weight are required!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            if "body_stats" not in client:
+                client["body_stats"] = []
+            client["body_stats"].append(data)
+            write_clients(clients)
+            return jsonify(client), 201
+
+    return jsonify({"message": "Client not found!"}), 404
+
+# --- Progress Photo Endpoints ---
+
+UPLOAD_FOLDER = os.path.join(app.root_path, 'uploads')
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+@app.route("/api/clients/<client_id>/progress-photos", methods=["POST"])
+def upload_progress_photo(client_id):
+    """Uploads a progress photo for a client."""
+    if 'photo' not in request.files:
+        return jsonify({"message": "No photo part in the request"}), 400
+    photo = request.files['photo']
+    if photo.filename == '':
+        return jsonify({"message": "No selected photo"}), 400
+    if photo:
+        filename = str(uuid.uuid4()) + os.path.splitext(photo.filename)[1]
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        photo.save(filepath)
+
+        clients = read_clients()
+        for client in clients:
+            if client["id"] == client_id:
+                if "progress_photos" not in client:
+                    client["progress_photos"] = []
+                client["progress_photos"].append({"filename": filename, "timestamp": str(datetime.now())})
+                write_clients(clients)
+                return jsonify({"message": "Photo uploaded successfully", "filename": filename}), 201
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/clients/<client_id>/progress-photos", methods=["GET"])
+def get_progress_photos(client_id):
+    """Gets all progress photos for a client."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            return jsonify(client.get("progress_photos", []))
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+MESSAGES_FILE = os.path.join("database", "messages.json")
+LICENSES_FILE = os.path.join("database", "licenses.json")
+PROSPECTS_FILE = os.path.join("database", "prospects.json")
+RESOURCES_FILE = os.path.join("database", "resources.json")
+
+def read_messages():
+    """Reads the messages from the JSON file."""    
+    data = read_json_file(MESSAGES_FILE)
+    return data if isinstance(data, list) else []
+
+def write_messages(messages):
+    """Writes the messages to the JSON file."""
+    write_json_file(MESSAGES_FILE, messages)
+
+def read_licenses():
+    """Reads the licenses from the JSON file."""
+    return read_json_file(LICENSES_FILE).get("licenses", [])
+
+def write_licenses(licenses):
+    """Writes the licenses to the JSON file."""
+    write_json_file(LICENSES_FILE, {"licenses": licenses})
+
+def read_prospects():
+    """Reads the prospects from the JSON file."""
+    data = read_json_file(PROSPECTS_FILE)
+    if isinstance(data, list):
+        return data
+    return data.get("prospects", [])
+
+def write_prospects(prospects):
+    """Writes the prospects to the JSON file."""
+    write_json_file(PROSPECTS_FILE, {"prospects": prospects})
+
+def read_resources():
+    """Reads the resources from the JSON file."""
+    data = read_json_file(RESOURCES_FILE)
+    if isinstance(data, list):
+        return data
+    return data.get("resources", [])
+
+def write_resources(resources):
+    """Writes the resources to the JSON file."""
+    write_json_file(RESOURCES_FILE, {"resources": resources})
+
+@app.route("/api/purchase-license", methods=["POST"])
+@protected
+def purchase_license():
+    """Simulates a license purchase and generates a new cryptographic license key."""
+    license_key = str(uuid.uuid4())
+    licenses = read_licenses()
+    licenses.append({"key": license_key, "issued_at": str(datetime.now()), "is_valid": True})
+    write_licenses(licenses)
+    return jsonify({"message": "License purchased and generated successfully!", "license_key": license_key}), 201
+
+@app.route("/api/validate-license", methods=["POST"])
+def validate_license():
+    """Validates a given license key."""
+    data = request.get_json()
+    license_key = data.get("license_key")
+    if not license_key:
+        return jsonify({"message": "License key is required!"}), 400
+
+    licenses = read_licenses()
+    for license in licenses:
+        if license["key"] == license_key and license["is_valid"]:
+            return jsonify({"message": "License valid!", "is_valid": True}), 200
+    return jsonify({"message": "License invalid or not found!", "is_valid": False}), 401
+
+# --- Prospect Management Endpoints ---
+
+@app.route("/api/prospects", methods=["GET"])
+@protected
+def get_prospects():
+    """Lists all prospects."""
+    prospects = read_prospects()
+    return jsonify(prospects)
+
+@app.route("/api/prospects", methods=["POST"])
+@protected
+def add_prospect():
+    """Adds a new prospect."""
+    data = request.get_json()
+    if not data or not data.get("name") or not data.get("email"):
+        return jsonify({"message": "Name and email are required!"}), 400
+
+    prospects = read_prospects()
+    new_prospect = {
+        "id": str(uuid.uuid4()),
+        "name": data["name"],
+        "email": data["email"],
+        "status": data.get("status", "New")
+    }
+    prospects.append(new_prospect)
+    write_prospects(prospects)
+    return jsonify(new_prospect), 201
+
+@app.route("/api/prospects/<prospect_id>/status", methods=["PUT"])
+@protected
+def update_prospect_status(prospect_id):
+    """Updates the status of a prospect."""
+    data = request.get_json()
+    if not data or not data.get("status"):
+        return jsonify({"message": "Status is required!"}), 400
+
+    prospects = read_prospects()
+    for prospect in prospects:
+        if prospect["id"] == prospect_id:
+            prospect["status"] = data["status"]
+            write_prospects(prospects)
+            return jsonify(prospect)
+
+    return jsonify({"message": "Prospect not found!"}), 404
+
+# --- Resource Management Endpoints ---
+
+RESOURCES_UPLOAD_FOLDER = os.path.join(app.root_path, 'resources')
+app.config['RESOURCES_UPLOAD_FOLDER'] = RESOURCES_UPLOAD_FOLDER
+
+@app.route("/api/resources", methods=["POST"])
+@protected
+def upload_resource():
+    """Uploads a new resource."""
+    if 'resource' not in request.files:
+        return jsonify({"message": "No resource part in the request"}), 400
+    resource_file = request.files['resource']
+    title = request.form.get('title')
+
+    if resource_file.filename == '':
+        return jsonify({"message": "No selected resource file"}), 400
+    if not title:
+        return jsonify({"message": "Resource title is required!"}), 400
+
+    if resource_file:
+        filename = str(uuid.uuid4()) + os.path.splitext(resource_file.filename)[1]
+        filepath = os.path.join(app.config['RESOURCES_UPLOAD_FOLDER'], filename)
+        resource_file.save(filepath)
+
+        resources = read_resources()
+        new_resource = {
+            "id": str(uuid.uuid4()),
+            "title": title,
+            "filename": filename,
+            "uploaded_at": str(datetime.now())
+        }
+        resources.append(new_resource)
+        write_resources(resources)
+        return jsonify({"message": "Resource uploaded successfully", "resource": new_resource}), 201
+
+    return jsonify({"message": "Resource upload failed!"}), 500
+
+@app.route("/api/resources", methods=["GET"])
+@protected
+def get_resources():
+    """Lists all resources."""
+    resources = read_resources()
+    return jsonify(resources)
+
+@app.route('/resources/<filename>')
+def serve_resource(filename):
+    return send_from_directory(app.config['RESOURCES_UPLOAD_FOLDER'], filename)
+
+# --- Daily Check-in Endpoints ---
+
+@app.route("/api/clients/<client_id>/daily-checkin", methods=["POST"])
+def add_daily_checkin(client_id):
+    """Adds a new daily check-in for a client."""
+    data = request.get_json()
+    if not data or not data.get("date"):
+        return jsonify({"message": "Date is required!"}), 400
+
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            if "daily_checkins" not in client:
+                client["daily_checkins"] = []
+            client["daily_checkins"].append(data)
+            write_clients(clients)
+            return jsonify(client), 201
+
+    return jsonify({"message": "Client not found!"}), 404
+
+@app.route("/api/clients/<client_id>/daily-checkin", methods=["GET"])
+def get_daily_checkins(client_id):
+    """Gets all daily check-ins for a client."""
+    clients = read_clients()
+    for client in clients:
+        if client["id"] == client_id:
+            return jsonify(client.get("daily_checkins", []))
+    return jsonify({"message": "Client not found!"}), 404
+
+# --- Group Management Endpoints ---
+
+@app.route("/api/groups", methods=["POST"])
+@protected
+def create_group():
+    """Creates a new group."""
+    data = request.get_json()
+    if not data or not data.get("name"):
+        return jsonify({"message": "Group name is required!"}), 400
+
+    groups = read_groups()
+    new_group = {
+        "id": str(uuid.uuid4()),
+        "name": data["name"],
+        "description": data.get("description", ""),
+        "client_ids": data.get("client_ids", [])
+    }
+    groups.append(new_group)
+    write_groups(groups)
+    return jsonify(new_group), 201
+
+@app.route("/api/groups", methods=["GET"])
+@protected
+def get_groups():
+    """Lists all groups."""
+    groups = read_groups()
+    return jsonify(groups)
+
+@app.route("/api/groups/<group_id>", methods=["GET"])
+@protected
+def get_group(group_id):
+    """Gets a single group."""
+    groups = read_groups()
+    for group in groups:
+        if group["id"] == group_id:
+            return jsonify(group)
+    return jsonify({"message": "Group not found!"}), 404
+
+@app.route("/api/groups/<group_id>", methods=["PUT"])
+@protected
+def update_group(group_id):
+    """Updates a group."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    groups = read_groups()
+    for group in groups:
+        if group["id"] == group_id:
+            group["name"] = data.get("name", group["name"])
+            group["description"] = data.get("description", group["description"])
+            group["client_ids"] = data.get("client_ids", group["client_ids"])
+            write_groups(groups)
+            return jsonify(group)
+
+    return jsonify({"message": "Group not found!"}), 404
+
+@app.route("/api/groups/<group_id>", methods=["DELETE"])
+@protected
+def delete_group(group_id):
+    """Deletes a group."""
+    groups = read_groups()
+    updated_groups = [group for group in groups if group["id"] != group_id]
+    
+    if len(updated_groups) == len(groups):
+        return jsonify({"message": "Group not found!"}), 404
+
+    write_groups(updated_groups)
+    return jsonify({"message": "Group deleted successfully!"})
+
+@app.route("/api/groups/<group_id>/clients", methods=["POST"])
+@protected
+def add_client_to_group(group_id):
+    """Adds a client to a group."""
+    data = request.get_json()
+    client_id = data.get("client_id")
+    if not client_id:
+        return jsonify({"message": "Client ID is required!"}), 400
+
+    groups = read_groups()
+    for group in groups:
+        if group["id"] == group_id:
+            if client_id not in group["client_ids"]:
+                group["client_ids"].append(client_id)
+                write_groups(groups)
+                return jsonify(group)
+            else:
+                return jsonify({"message": "Client already in group!"}), 400
+
+    return jsonify({"message": "Group not found!"}), 404
+
+@app.route("/api/groups/<group_id>/clients/<client_id>", methods=["DELETE"])
+@protected
+def remove_client_from_group(group_id, client_id):
+    """Removes a client from a group."""
+    groups = read_groups()
+    for group in groups:
+        if group["id"] == group_id:
+            if client_id in group["client_ids"]:
+                group["client_ids"].remove(client_id)
+                write_groups(groups)
+                return jsonify(group)
+            else:
+                return jsonify({"message": "Client not in group!"}), 400
+
+    return jsonify({"message": "Group not found!"}), 404
+
+# --- Alert Management Endpoints ---
+
+@app.route("/api/alerts/check", methods=["POST"])
+@protected
+def check_alerts():
+    """Checks for client non-adherence and creates alerts."""
+    clients = read_clients()
+    workouts = read_workout_logs() # Changed from read_workouts() to read_workout_logs()
+    alerts = read_alerts()
+    
+    for client in clients:
+        # Check for missed workouts
+        assigned_workouts = [w for w in workouts if w["client_id"] == client["id"]]
+        for workout in assigned_workouts:
+            if not workout.get("logged_data"):
+                alert_exists = any(a["type"] == "missed_workout" and a["client_id"] == client["id"] and a["details"]["workout_id"] == workout["id"] for a in alerts)
+                if not alert_exists:
+                    new_alert = {
+                        "id": str(uuid.uuid4()),
+                        "client_id": client["id"],
+                        "type": "missed_workout",
+                        "message": f"Client {client['name']} missed a workout on {workout['date']}.",
+                        "details": {"workout_id": workout["id"]},
+                        "timestamp": str(datetime.now())
+                    }
+                    alerts.append(new_alert)
+
+        # Check for no recent check-ins
+        if "daily_checkins" in client and client["daily_checkins"]:
+            last_checkin_date = max(datetime.fromisoformat(c["date"]) for c in client["daily_checkins"])
+            if (datetime.now() - last_checkin_date).days > 3:
+                alert_exists = any(a["type"] == "no_recent_checkin" and a["client_id"] == client["id"] for a in alerts)
+                if not alert_exists:
+                    new_alert = {
+                        "id": str(uuid.uuid4()),
+                        "client_id": client["id"],
+                        "type": "no_recent_checkin",
+                        "message": f"Client {client['name']} has not checked in for more than 3 days.",
+                        "details": {},
+                        "timestamp": str(datetime.now())
+                    }
+                    alerts.append(new_alert)
+
+    write_alerts(alerts)
+    return jsonify(alerts), 201
+
+@app.route("/api/alerts", methods=["GET"])
+@protected
+def get_alerts():
+    """Lists all alerts."""
+    alerts = read_alerts()
+    return jsonify(alerts)
+
+@app.route("/api/alerts/<alert_id>", methods=["DELETE"])
+@protected
+def delete_alert(alert_id):
+    """Deletes an alert."""
+    alerts = read_alerts()
+    updated_alerts = [alert for alert in alerts if alert["id"] != alert_id]
+    
+    if len(updated_alerts) == len(alerts):
+        return jsonify({"message": "Alert not found!"}), 404
+
+    write_alerts(updated_alerts)
+    return jsonify({"message": "Alert deleted successfully!"})
+
+# --- Program Management Endpoints ---
+
+@app.route("/api/programs", methods=["POST"])
+@protected
+def create_program():
+    """Creates a new program."""
+    data = request.get_json()
+    if not data or not data.get("name"):
+        return jsonify({"message": "Program name is required!"}), 400
+
+    programs = read_programs()
+    new_program = {
+        "id": f"prog_{uuid.uuid4()}",
+        "name": data["name"],
+        "description": data.get("description", ""),
+        "weeks": data.get("weeks", []) # Expects a list of weeks, each with days
+    }
+    programs.append(new_program)
+    write_programs(programs)
+    return jsonify(new_program), 201
+
+@app.route("/api/programs", methods=["GET"])
+@protected
+def get_programs():
+    """Lists all programs."""
+    programs = read_programs()
+    return jsonify(programs)
+
+@app.route("/api/programs/<program_id>", methods=["GET"])
+@protected
+def get_program(program_id):
+    """Gets a single program."""
+    programs = read_programs()
+    program = next((p for p in programs if p["id"] == program_id), None)
+    if program:
+        return jsonify(program)
+    return jsonify({"message": "Program not found!"}), 404
+
+@app.route("/api/programs/<program_id>", methods=["PUT"])
+@protected
+def update_program(program_id):
+    """Updates a program."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid data!"}), 400
+
+    programs = read_programs()
+    for i, program in enumerate(programs):
+        if program["id"] == program_id:
+            programs[i]["name"] = data.get("name", program["name"])
+            programs[i]["description"] = data.get("description", program["description"])
+            programs[i]["weeks"] = data.get("weeks", program["weeks"])
+            write_programs(programs)
+            return jsonify(programs[i])
+
+    return jsonify({"message": "Program not found!"}), 404
+
+@app.route("/api/programs/<program_id>", methods=["DELETE"])
+@protected
+def delete_program(program_id):
+    """Deletes a program."""
+    programs = read_programs()
+    updated_programs = [p for p in programs if p["id"] != program_id]
+    
+    if len(updated_programs) == len(programs):
+        return jsonify({"message": "Program not found!"}), 404
+
+    write_programs(updated_programs)
+    return jsonify({"message": "Program deleted successfully!"})
+
+@app.route("/api/clients/<client_id>/assign-program", methods=["POST"])
+@protected
+def assign_program_to_client(client_id):
+    """
+    Assigns a program template to a client, creating a new, editable
+    copy for that client.
+    """
+    data = request.get_json()
+    template_id = data.get("template_id")
+    start_date_str = data.get("start_date")
+
+    if not all([template_id, start_date_str]):
+        return jsonify({"message": "Template ID and Start Date are required!"}), 400
+
+    templates = read_workout_templates()
+    template = next((t for t in templates if t["id"] == template_id), None)
+    if not template:
+        return jsonify({"message": "Workout template not found!"}), 404
+
+    client_workouts = read_client_workouts()
+    
+    new_client_program = {
+        "id": f"cp_{uuid.uuid4()}",
+        "client_id": client_id,
+        "template_id": template_id,
+        "name": template["name"],
+        "description": template["description"],
+        "start_date": start_date_str,
+        "days": template["days"] # This is a direct copy
+    }
+
+    client_workouts.append(new_client_program)
+    write_client_workouts(client_workouts)
+
+    return jsonify(new_client_program), 201
+
+@socketio.on('join')
+def on_join(data):
+    client_id = data['room']
+
+@socketio.on('message')
+def on_message():
+    data = request.event['args'][0]
+    if isinstance(data, dict) and 'room' in data:
+        client_id = data['room']
+        sender = data['sender']
+        text = data['text']
+        message = {'room': client_id, 'sender': sender, 'text': text, 'timestamp': str(datetime.now())}
+        messages = read_messages()
+        messages.append(message)
+        write_messages(messages)
+        emit('message', message, room=client_id)
+    else:
+        print("Error: 'room' key not found in data or data is not a dictionary in on_message")
+
+if __name__ == "__main__":
+    socketio.run(app, debug=True, allow_unsafe_werkzeug=True)
+
+==================================================
+File: frontend/src/App.js
+==================================================
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import LoginPage from './components/LoginPage';
+import TrainerDashboard from './components/TrainerDashboard';
+import ClientDashboard from './components/ClientDashboard';
+import ExerciseLibrary from './components/ExerciseLibrary';
+import WorkoutDashboard from './components/WorkoutDashboard';
+import WorkoutEditor from './components/WorkoutEditor';
+import ProspectManagement from './components/ProspectManagement';
+import ResourceHub from './components/ResourceHub';
+import Layout from './components/Layout';
+import ProgressView from './components/ProgressView';
+import BodyStatProgress from './components/BodyStatProgress';
+import ProgressPhotoComparison from './components/ProgressPhotoComparison';
+import Chat from './components/Chat';
+import MealPlanner from './components/MealPlanner';
+import ProgramDashboard from './components/ProgramDashboard';
+import ProgramBuilder from './components/ProgramBuilder';
+import ErrorBoundary from './components/ErrorBoundary';
+import ManageClientPage from './components/ManageClientPage';
+import GroupManagement from './components/GroupManagement';
+import AlertsDashboard from './components/AlertsDashboard';
+import ClientOnboardingPage from './components/ClientOnboardingPage';
+
+function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(true);
+
+  useEffect(() => {
+    // By setting isAuthenticated to true initially, we bypass the login.
+    // The localStorage logic is kept in case you want to revert this change.
+    localStorage.setItem('isAuthenticated', isAuthenticated);
+  }, [isAuthenticated]);
+
+  return (
+    <Router>
+      <Routes>
+        <Route 
+          path="/login" 
+          element={
+            isAuthenticated ? (
+              <Navigate to="/dashboard" />
+            ) : (
+              <LoginPage setIsAuthenticated={setIsAuthenticated} />
+            )
+          } 
+        />
+        <Route 
+          path="/dashboard" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><TrainerDashboard /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/exercise-library" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><ExerciseLibrary /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/workout-dashboard" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><WorkoutDashboard /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/workout-editor/:templateId" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><WorkoutEditor /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/program-dashboard" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><ProgramDashboard /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/program-editor/:programId" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><ErrorBoundary><ProgramBuilder /></ErrorBoundary></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/prospect-management" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><ProspectManagement /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/resource-hub" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><ResourceHub /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/workout-progress/:clientId" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><ProgressView /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/body-stat-progress/:clientId" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><BodyStatProgress /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/progress-photos/:clientId" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><ProgressPhotoComparison /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/chat/:clientId" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><Chat isTrainer={true} /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/meal-plan/:clientId" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><MealPlanner /></Layout> : <Navigate to="/login" />}
+        />
+        <Route path="/client/:clientId" element={<ClientDashboard />} />
+        <Route 
+          path="/client/:clientId/manage" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><ManageClientPage /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/groups" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><GroupManagement /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/alerts" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><AlertsDashboard /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/add-client" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><ClientOnboardingPage /></Layout> : <Navigate to="/login" />}
+        />
+        <Route 
+          path="/recipes" 
+          element={isAuthenticated ? <Layout isAuthenticated={isAuthenticated}><MealPlanner /></Layout> : <Navigate to="/login" />}
+        />
+        <Route path="*" element={<Navigate to="/login" />} />
+      </Routes>
+    </Router>
+  );
+}
+
+export default App;
+
+==================================================
+File: frontend/src/components/TrainerDashboard.js
+==================================================
+import React, { useState, useEffect, useCallback } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import ClientViewModal from './ClientViewModal';
+import GroupManagement from './GroupManagement';
+import AlertsDashboard from './AlertsDashboard';
+import ProgramManagement from './ProgramManagement';
+import EditClientModal from './EditClientModal';
+import { 
+    Users, TrendingUp, Activity, Target, Calendar, Plus, Search, MoreVertical, Eye, Edit, Settings, CheckCircle, AlertCircle, BarChart3, Bell 
+} from 'lucide-react';
+
+const TrainerDashboard = () => {
+    const navigate = useNavigate();
+    const [clients, setClients] = useState([]);
+    const [selectedClient, setSelectedClient] = useState(null);
+    const [clientToEdit, setClientToEdit] = useState(null);
+    const [showModal, setShowModal] = useState(false);
+    const [showEditModal, setShowEditModal] = useState(false);
+    const [showClientModal, setShowClientModal] = useState(false);
+    const [clientToViewId, setClientToViewId] = useState(null);
+    const [activeTab, setActiveTab] = useState('clients');
+    const [clientStatusFilter, setClientStatusFilter] = useState('active');
+    const [searchTerm, setSearchTerm] = useState('');
+
+    const fetchClients = useCallback(async () => {
+        const response = await fetch(`http://localhost:5000/api/clients?status=${clientStatusFilter}`, {
+            headers: {
+                'Authorization': 'Basic ' + btoa('trainer:password')
+            }
+        });
+        const data = await response.json();
+        setClients(data);
+    }, [clientStatusFilter]);
+
+    useEffect(() => {
+        fetchClients();
+    }, [fetchClients]);
+
+    const handleManageClick = (client) => {
+        navigate(`/client/${client.id}/manage`);
+    };
+
+    const handleEditClick = (client) => {
+        setClientToEdit(client);
+        setShowEditModal(true);
+    };
+
+    const handleArchiveClick = async (clientId) => {
+        if (window.confirm('Are you sure you want to toggle the archive status for this client?')) {
+            try {
+                await fetch(`http://localhost:5000/api/clients/${clientId}/archive`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': 'Basic ' + btoa('trainer:password')
+                    }
+                });
+                fetchClients();
+            } catch (error) {
+                console.error('Error archiving client:', error);
+            }
+        }
+    };
+
+    const handleViewClient = (clientId) => {
+        setClientToViewId(clientId);
+        setShowClientModal(true);
+    };
+
+    // Filter clients based on search term
+    const filteredClients = clients.filter(client => 
+        client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        client.email.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    // Stats calculations
+    const activeClients = clients.filter(c => !c.archived).length;
+    const totalSessions = clients.reduce((sum, c) => sum + (Math.floor(Math.random() * 20) + 5), 0);
+    const avgCompletionRate = Math.round(clients.reduce((sum, c) => sum + (Math.floor(Math.random() * 40) + 60), 0) / Math.max(clients.length, 1));
+
+    // Modern Stats Card Component
+    const StatsCard = ({ title, value, subtitle, icon: Icon, trend, color = "blue" }) => {
+        const colorClasses = {
+            blue: "from-blue-500 to-blue-600 text-blue-600 bg-blue-50 border-blue-200",
+            green: "from-green-500 to-green-600 text-green-600 bg-green-50 border-green-200",
+            purple: "from-purple-500 to-purple-600 text-purple-600 bg-purple-50 border-purple-200",
+            orange: "from-orange-500 to-orange-600 text-orange-600 bg-orange-50 border-orange-200"
+        };
+
+        return (
+            <div className="bg-white rounded-2xl border border-gray-100 p-6 hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
+                <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                        <div className="flex items-center space-x-3 mb-4">
+                            <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${colorClasses[color].split(' ')[0]} ${colorClasses[color].split(' ')[1]} flex items-center justify-center shadow-lg`}>
+                                <Icon className="w-6 h-6 text-white" />
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-medium text-gray-600 uppercase tracking-wide">{title}</h3>
+                                {trend && (
+                                    <div className="flex items-center space-x-1 mt-1">
+                                        <TrendingUp className="w-3 h-3 text-green-500" />
+                                        <span className="text-xs text-green-600 font-medium">+{trend}%</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        <div className="space-y-1">
+                            <div className="text-3xl font-bold text-gray-900">{value}</div>
+                            {subtitle && <p className="text-sm text-gray-500">{subtitle}</p>}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    // Enhanced Client Card Component
+    const ClientCard = ({ client, onManage, onView, onEdit, onArchive }) => {
+        const workoutCompletionRate = Math.floor(Math.random() * 5) + 1;
+        const engagementScore = Math.floor(Math.random() * 40) + 60;
+        const isActive = !client.archived;
+        const totalSessions = Math.floor(Math.random() * 20) + 5;
+        const lastActive = `${Math.floor(Math.random() * 24)}h ago`;
+
+        return (
+            <div 
+                className="bg-white rounded-2xl border border-gray-100 p-6 hover:shadow-xl transition-all duration-300 hover:-translate-y-1 group cursor-pointer"
+                onClick={() => onView(client.id)}
+            >
+                <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center space-x-4 flex-1">
+                        <div className="relative">
+                            <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-lg">
+                                {client.name.charAt(0).toUpperCase()}
+                            </div>
+                            {isActive && (
+                                <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-white"></div>
+                            )}
+                        </div>
+                        <div className="flex-1 min-w-0 overflow-hidden">
+                            <h3 className="text-lg font-bold text-gray-900 group-hover:text-blue-600 transition-colors duration-200 truncate">
+                                {client.name}
+                            </h3>
+                            <p className="text-sm text-gray-500 truncate">{client.email}</p>
+                        </div>
+                    </div>
+                    
+                    <div className="relative">
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); onEdit(client); }}
+                            className="p-2 hover:bg-gray-100 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                        >
+                            <MoreVertical className="w-4 h-4 text-gray-400" />
+                        </button>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <div className="text-xs text-gray-500 uppercase font-medium">Progress</div>
+                        <div className="flex items-baseline space-x-1">
+                            <span className="text-2xl font-bold text-gray-800">{workoutCompletionRate}</span>
+                            <span className="text-sm text-gray-500">/ 5</span>
+                        </div>
+                    </div>
+                    <div>
+                        <div className="text-xs text-gray-500 uppercase font-medium">Last Active</div>
+                        <div className="text-2xl font-bold text-gray-800">{lastActive}</div>
+                    </div>
+                </div>
+
+                {/* Progress Bar */}
+                <div className="mb-4">
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div 
+                            className="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full transition-all duration-500"
+                            style={{ width: `${(workoutCompletionRate / 5) * 100}%` }}
+                        ></div>
+                    </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center space-x-2">
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onManage(client); }}
+                        className="flex-1 flex items-center justify-center space-x-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
+                    >
+                        <Settings className="w-4 h-4" />
+                        <span>Manage</span>
+                    </button>
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onArchive(client.id); }}
+                        className={`flex-1 flex items-center justify-center space-x-2 px-4 py-2 rounded-lg transition-colors font-medium ${
+                            isActive 
+                                ? 'bg-red-50 text-red-600 hover:bg-red-100' 
+                                : 'bg-green-50 text-green-600 hover:bg-green-100'
+                        }`}
+                    >
+                        {isActive ? 'Archive' : 'Unarchive'}
+                    </button>
+                </div>
+            </div>
+        );
+    };
+
+    // Tab Navigation Component
+    const TabButton = ({ id, label, icon: Icon, isActive, onClick, count }) => (
+        <button
+            onClick={() => onClick(id)}
+            className={`flex items-center space-x-3 px-6 py-3 rounded-xl font-medium transition-all duration-200 ${
+                isActive
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/25'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+            }`}
+        >
+            <Icon className="w-5 h-5" />
+            <span>{label}</span>
+            {count !== undefined && (
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                    isActive ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'
+                }`}>
+                    {count}
+                </span>
+            )}
+        </button>
+    );
+
+    const renderOverview = () => (
+        <div className="space-y-8">
+            {/* Stats Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <StatsCard
+                    title="Active Clients"
+                    value={activeClients}
+                    subtitle="Currently training"
+                    icon={Users}
+                    trend={12}
+                    color="blue"
+                />
+                <StatsCard
+                    title="Total Sessions"
+                    value={totalSessions}
+                    subtitle="This month"
+                    icon={Activity}
+                    trend={8}
+                    color="green"
+                />
+                <StatsCard
+                    title="Avg Completion"
+                    value={`${avgCompletionRate}%`}
+                    subtitle="Workout completion rate"
+                    icon={Target}
+                    trend={5}
+                    color="purple"
+                />
+                <StatsCard
+                    title="Revenue"
+                    value="$12,450"
+                    subtitle="This month"
+                    icon={TrendingUp}
+                    trend={15}
+                    color="orange"
+                />
+            </div>
+
+            {/* Quick Actions */}
+            <div className="bg-white rounded-2xl border border-gray-100 p-6">
+                <h3 className="text-lg font-bold text-gray-900 mb-4">Quick Actions</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <Link
+                        to="/workout-editor"
+                        className="flex items-center space-x-3 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl hover:shadow-md transition-all duration-200 group"
+                    >
+                        <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                            <Plus className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                            <div className="font-medium text-gray-900 group-hover:text-blue-600">Create Workout</div>
+                            <div className="text-sm text-gray-500">Build new templates</div>
+                        </div>
+                    </Link>
+                    
+                    <Link
+                        to="/add-client"
+                        className="flex items-center space-x-3 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl hover:shadow-md transition-all duration-200 group"
+                    >
+                        <div className="w-10 h-10 bg-gradient-to-r from-green-500 to-emerald-600 rounded-lg flex items-center justify-center">
+                            <Users className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                            <div className="font-medium text-gray-900 group-hover:text-green-600">Add Client</div>
+                            <div className="text-sm text-gray-500">Onboard new members</div>
+                        </div>
+                    </Link>
+                    
+                    <Link
+                        to="/program-builder"
+                        className="flex items-center space-x-3 p-4 bg-gradient-to-r from-orange-50 to-yellow-50 rounded-xl hover:shadow-md transition-all duration-200 group"
+                    >
+                        <div className="w-10 h-10 bg-gradient-to-r from-orange-500 to-yellow-600 rounded-lg flex items-center justify-center">
+                            <Calendar className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                            <div className="font-medium text-gray-900 group-hover:text-orange-600">Build Program</div>
+                            <div className="text-sm text-gray-500">Create training plans</div>
+                        </div>
+                    </Link>
+                </div>
+            </div>
+
+            {/* Recent Activity */}
+            <div className="bg-white rounded-2xl border border-gray-100 p-6">
+                <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-lg font-bold text-gray-900">Recent Activity</h3>
+                    <button className="text-sm text-blue-600 hover:text-blue-700 font-medium">View All</button>
+                </div>
+                <div className="space-y-4">
+                    {clients.slice(0, 3).map((client, index) => (
+                        <div key={client.id} className="flex items-center space-x-4 p-3 bg-gray-50 rounded-lg">
+                            <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">
+                                {client.name.charAt(0)}
+                            </div>
+                            <div className="flex-1">
+                                <div className="font-medium text-gray-900">{client.name}</div>
+                                <div className="text-sm text-gray-500">Completed workout • 2 hours ago</div>
+                            </div>
+                            <CheckCircle className="w-5 h-5 text-green-500" />
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+
+    const renderClients = () => (
+        <div className="space-y-6">
+            {/* Search and Filter Bar */}
+            <div className="bg-white rounded-2xl border border-gray-100 p-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-4 sm:space-y-0">
+                    <div className="relative flex-1 max-w-md">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                        <input
+                            type="text"
+                            placeholder="Search clients..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                    </div>
+                    
+                    <div className="flex items-center space-x-3">
+                        <select
+                            value={clientStatusFilter}
+                            onChange={(e) => setClientStatusFilter(e.target.value)}
+                            className="px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                            <option value="active">Active Clients</option>
+                            <option value="archived">Archived Clients</option>
+                            <option value="">All Clients</option>
+                        </select>
+                        
+                        <Link
+                            to="/add-client"
+                            className="flex items-center space-x-2 px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-medium"
+                        >
+                            <Plus className="w-5 h-5" />
+                            <span>Add Client</span>
+                        </Link>
+                    </div>
+                </div>
+            </div>
+
+            {/* Clients Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+                {filteredClients.map((client) => (
+                    <ClientCard
+                        key={client.id}
+                        client={client}
+                        onManage={handleManageClick}
+                        onView={handleViewClient}
+                        onEdit={handleEditClick}
+                        onArchive={handleArchiveClick}
+                    />
+                ))}
+            </div>
+
+            {filteredClients.length === 0 && (
+                <div className="text-center py-12">
+                    <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">No clients found</h3>
+                    <p className="text-gray-500 mb-6">
+                        {searchTerm ? 'Try adjusting your search terms' : 'Get started by adding your first client'}
+                    </p>
+                    <Link
+                        to="/add-client"
+                        className="inline-flex items-center space-x-2 px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-medium"
+                    >
+                        <Plus className="w-5 h-5" />
+                        <span>Add Client</span>
+                    </Link>
+                </div>
+            )}
+        </div>
+    );
+
+    const renderActiveTab = () => {
+        switch (activeTab) {
+            case 'overview':
+                return renderOverview();
+            case 'clients':
+                return renderClients();
+            case 'groups':
+                return <GroupManagement />;
+            case 'programs':
+                return <ProgramManagement />;
+            case 'alerts':
+                return <AlertsDashboard />;
+            default:
+                return renderOverview();
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-gray-50">
+            {/* Header */}
+            <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
+                <div className="max-w-7xl mx-auto px-6 py-4">
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <h1 className="text-2xl font-bold text-gray-900">Trainer Dashboard</h1>
+                            <p className="text-gray-600 mt-1">Manage your clients and training programs</p>
+                        </div>
+                        
+                        <div className="flex items-center space-x-4">
+                            <button className="relative p-2 text-gray-400 hover:text-gray-600 transition-colors">
+                                <Bell className="w-6 h-6" />
+                                <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full"></span>
+                            </button>
+                            
+                            <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold">
+                                T
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Navigation Tabs */}
+            <div className="bg-white border-b border-gray-200">
+                <div className="max-w-7xl mx-auto px-6">
+                    <div className="flex items-center space-x-2 py-4 overflow-x-auto">
+                        <TabButton
+                            id="clients"
+                            label="Clients"
+                            icon={Users}
+                            isActive={activeTab === 'clients'}
+                            onClick={setActiveTab}
+                            count={activeClients}
+                        />
+                        <TabButton
+                            id="groups"
+                            label="Groups"
+                            icon={Users}
+                            isActive={activeTab === 'groups'}
+                            onClick={setActiveTab}
+                        />
+                        <TabButton
+                            id="programs"
+                            label="Programs"
+                            icon={Calendar}
+                            isActive={activeTab === 'programs'}
+                            onClick={setActiveTab}
+                        />
+                        <TabButton
+                            id="alerts"
+                            label="Alerts"
+                            icon={AlertCircle}
+                            isActive={activeTab === 'alerts'}
+                            onClick={setActiveTab}
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* Main Content */}
+            <div className="max-w-7xl mx-auto px-6 py-8">
+                {renderActiveTab()}
+            </div>
+
+            {/* Modals */}
+            
+            {showEditModal && clientToEdit && (
+                <EditClientModal
+                    client={clientToEdit}
+                    onClose={() => {
+                        setShowEditModal(false);
+                        setClientToEdit(null);
+                    }}
+                    onClientUpdated={fetchClients}
+                />
+            )}
+            
+            {showClientModal && clientToViewId && (
+                <ClientViewModal
+                    clientId={clientToViewId}
+                    onClose={() => {
+                        setShowClientModal(false);
+                        setClientToViewId(null);
+                    }}
+                />
+            )}
+        </div>
+    );
+};
+
+export default TrainerDashboard;
+
+==================================================
+File: frontend/src/components/WorkoutEditor.js
+==================================================
+import React, { useState, useEffect, useReducer } from 'react';
+import { DndContext, useDraggable, useDroppable, closestCenter, DragOverlay } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { motion, AnimatePresence } from 'framer-motion';
+import { v4 as uuidv4 } from 'uuid';
+import apiClient from '../api';
+import { FixedSizeList as VirtualList } from 'react-window';
+import { 
+    Trash2, 
+    ChevronUp, 
+    ChevronDown, 
+    GripVertical, 
+    Info, 
+    PlusCircle, 
+    X, 
+    Plus,
+    Save,
+    Dumbbell,
+    Timer,
+    Target,
+    StickyNote,
+    Flame,
+    Activity,
+    Search,
+    Filter,
+    Crown,
+    Sparkles,
+    ArrowLeft,
+    Copy,
+    Share2,
+    Settings,
+    Zap,
+    CheckCircle,
+    AlertCircle,
+    Clock,
+    Layers,
+    MoreVertical,
+    Edit3,
+    Maximize2,
+    Minimize2
+} from 'lucide-react';
+import { toast } from 'react-hot-toast';
+import ExerciseDetailModal from './ExerciseDetailModal';
+import { produce } from 'immer';
+import { useParams, useNavigate } from 'react-router-dom';
+import { getMuscleGroupColors, MUSCLE_GROUP_COLORS } from '../utils';
+
+const initialState = {
+    name: '',
+    days: []
+};
+
+// Day color themes
+const DAY_COLOR_THEMES = [
+    {
+        id: 'blue-purple',
+        name: 'Ocean',
+        gradient: 'from-blue-600 to-purple-600',
+        lightGradient: 'from-blue-50 to-purple-50',
+        accent: 'bg-blue-500',
+        text: 'text-blue-700'
+    },
+    {
+        id: 'emerald-teal',
+        name: 'Forest',
+        gradient: 'from-emerald-600 to-teal-600',
+        lightGradient: 'from-emerald-50 to-teal-50',
+        accent: 'bg-emerald-500',
+        text: 'text-emerald-700'
+    },
+    {
+        id: 'orange-red',
+        name: 'Sunset',
+        gradient: 'from-orange-600 to-red-600',
+        lightGradient: 'from-orange-50 to-red-50',
+        accent: 'bg-orange-500',
+        text: 'text-orange-700'
+    },
+    {
+        id: 'purple-pink',
+        name: 'Cosmic',
+        gradient: 'from-purple-600 to-pink-600',
+        lightGradient: 'from-purple-50 to-pink-50',
+        accent: 'bg-purple-500',
+        text: 'text-purple-700'
+    },
+    {
+        id: 'indigo-blue',
+        name: 'Midnight',
+        gradient: 'from-indigo-600 to-blue-600',
+        lightGradient: 'from-indigo-50 to-blue-50',
+        accent: 'bg-indigo-500',
+        text: 'text-indigo-700'
+    },
+    {
+        id: 'green-blue',
+        name: 'Tropical',
+        gradient: 'from-green-600 to-blue-600',
+        lightGradient: 'from-green-50 to-blue-50',
+        accent: 'bg-green-500',
+        text: 'text-green-700'
+    },
+    {
+        id: 'yellow-orange',
+        name: 'Sunrise',
+        gradient: 'from-yellow-500 to-orange-600',
+        lightGradient: 'from-yellow-50 to-orange-50',
+        accent: 'bg-yellow-500',
+        text: 'text-yellow-700'
+    },
+    {
+        id: 'rose-pink',
+        name: 'Blossom',
+        gradient: 'from-rose-600 to-pink-600',
+        lightGradient: 'from-rose-50 to-pink-50',
+        accent: 'bg-rose-500',
+        text: 'text-rose-700'
+    }
+];
+
+function templateReducer(state, action) {
+    switch (action.type) {
+        case 'SET_TEMPLATE_NAME':
+            return { ...state, name: action.payload };
+        case 'ADD_DAY':
+            return {
+                ...state,
+                days: [
+                    ...state.days,
+                    { 
+                        id: uuidv4(), 
+                        name: `Day ${state.days.length + 1}`, 
+                        groups: [], 
+                        collapsed: false, 
+                        notes: '',
+                        colorTheme: DAY_COLOR_THEMES[state.days.length % DAY_COLOR_THEMES.length].id
+                    }
+                ]
+            };
+        case 'UPDATE_DAY_NAME': {
+            const { dayIndex, name } = action.payload;
+            return {
+                ...state,
+                days: state.days.map((day, index) => 
+                    index === dayIndex ? { ...day, name: name } : day
+                )
+            };
+        }
+        case 'UPDATE_DAY_NOTES': {
+            const { dayIndex, notes } = action.payload;
+            return {
+                ...state,
+                days: state.days.map((day, index) =>
+                    index === dayIndex ? { ...day, notes: notes } : day
+                )
+            };
+        }
+        case 'UPDATE_DAY_COLOR': {
+            const { dayIndex, colorTheme } = action.payload;
+            return {
+                ...state,
+                days: state.days.map((day, index) =>
+                    index === dayIndex ? { ...day, colorTheme: colorTheme } : day
+                )
+            };
+        }
+        case 'TOGGLE_DAY_COLLAPSE': {
+            const { dayIndex } = action.payload;
+            return {
+                ...state,
+                days: state.days.map((day, index) => 
+                    index === dayIndex ? { ...day, collapsed: !day.collapsed } : day
+                )
+            };
+        }
+        case 'ADD_GROUP': {
+            const { dayIndex } = action.payload;
+            return {
+                ...state,
+                days: state.days.map((day, index) =>
+                    index === dayIndex 
+                        ? { ...day, groups: [...day.groups, { id: uuidv4(), type: 'standard', exercises: [], is_dropset: false, is_superset: false }] }
+                        : day
+                )
+            };
+        }
+        case 'ADD_EXERCISE': {
+            const { dayIndex, groupIndex, exercise } = action.payload;
+            
+            const newExercise = {
+                ...exercise,
+                instanceId: uuidv4(),
+                sets: [{ id: uuidv4(), reps: '', weight: '', rpe: '', rest: '', is_warmup: false }],
+                notes: '',
+            };
+
+            return produce(state, draft => {
+                const group = draft.days[dayIndex].groups[groupIndex];
+                if (group) {
+                    group.exercises.push(newExercise);
+                }
+            });
+        }
+        case 'UPDATE_EXERCISE_DETAIL': {
+            const { dayIndex, groupIndex, exerciseInstanceId, setIndex, field, value } = action.payload;
+            return produce(state, draft => {
+                const exercise = draft.days[dayIndex].groups[groupIndex].exercises.find(ex => ex.instanceId === exerciseInstanceId);
+                if (exercise && exercise.sets[setIndex]) {
+                    exercise.sets[setIndex][field] = value;
+                }
+            });
+        }
+        
+        case 'UPDATE_EXERCISE_NOTES': {
+            const { dayIndex, groupIndex, exerciseInstanceId, notes } = action.payload;
+            return produce(state, draft => {
+                const exercise = draft.days[dayIndex].groups[groupIndex].exercises.find(ex => ex.instanceId === exerciseInstanceId);
+                if (exercise) {
+                    exercise.notes = notes;
+                }
+            });
+        }
+
+        case 'ADD_SET': {
+            const { dayIndex, groupIndex, exerciseInstanceId } = action.payload;
+            return produce(state, draft => {
+                const exercise = draft.days[dayIndex].groups[groupIndex].exercises.find(ex => ex.instanceId === exerciseInstanceId);
+                if (exercise) {
+                    exercise.sets.push({ id: uuidv4(), reps: '', weight: '', rpe: '', rest: '', is_warmup: false });
+                }
+            });
+        }
+
+        case 'REMOVE_SET': {
+            const { dayIndex, groupIndex, exerciseInstanceId, setIndex } = action.payload;
+            return produce(state, draft => {
+                const exercise = draft.days[dayIndex].groups[groupIndex].exercises.find(ex => ex.instanceId === exerciseInstanceId);
+                if (exercise && exercise.sets.length > 1) {
+                    exercise.sets.splice(setIndex, 1);
+                }
+            });
+        }
+        
+        case 'TOGGLE_WARMUP_SET': {
+            const { dayIndex, groupIndex, exerciseInstanceId, setIndex } = action.payload;
+            return produce(state, draft => {
+                const exercise = draft.days[dayIndex].groups[groupIndex].exercises.find(ex => ex.instanceId === exerciseInstanceId);
+                if (exercise && exercise.sets[setIndex]) {
+                    exercise.sets[setIndex].is_warmup = !exercise.sets[setIndex].is_warmup;
+                }
+            });
+        }
+
+        case 'REMOVE_EXERCISE': {
+            const { dayIndex, groupIndex, exerciseInstanceId } = action.payload;
+            return produce(state, draft => {
+                const group = draft.days[dayIndex].groups[groupIndex];
+                const exerciseIndex = group.exercises.findIndex(ex => ex.instanceId === exerciseInstanceId);
+                if (exerciseIndex > -1) {
+                    group.exercises.splice(exerciseIndex, 1);
+                }
+            });
+        }
+        case 'REORDER_DAYS': {
+            const { oldIndex, newIndex } = action.payload;
+            return { ...state, days: arrayMove(state.days, oldIndex, newIndex) };
+        }
+        case 'REORDER_EXERCISES': {
+            const {
+                dayIndex,
+                oldGroupIndex,
+                newGroupIndex,
+                oldExerciseIndex,
+                newExerciseIndex
+            } = action.payload;
+
+            return produce(state, draft => {
+                const day = draft.days[dayIndex];
+                const [movedExercise] = day.groups[oldGroupIndex].exercises.splice(oldExerciseIndex, 1);
+                day.groups[newGroupIndex].exercises.splice(newExerciseIndex, 0, movedExercise);
+            });
+        }
+        case 'MOVE_EXERCISE_TO_DIFFERENT_DAY': {
+            const {
+                oldDayIndex,
+                newDayIndex,
+                oldGroupIndex,
+                newGroupIndex,
+                oldExerciseIndex,
+                newExerciseIndex
+            } = action.payload;
+
+            return produce(state, draft => {
+                const [movedExercise] = draft.days[oldDayIndex].groups[oldGroupIndex].exercises.splice(oldExerciseIndex, 1);
+                draft.days[newDayIndex].groups[newGroupIndex].exercises.splice(newExerciseIndex, 0, movedExercise);
+            });
+        }
+        case 'REMOVE_GROUP': {
+            const { dayIndex, groupIndex } = action.payload;
+            const newDays = [...state.days];
+            const newGroups = [...newDays[dayIndex].groups];
+            newGroups.splice(groupIndex, 1);
+            newDays[dayIndex] = { ...newDays[dayIndex], groups: newGroups };
+            return { ...state, days: newDays };
+        }
+        case 'ADD_EXERCISE_WITH_AUTO_CREATE': {
+            const { exercise, dayIndex } = action.payload;
+            const newExercise = {
+                ...exercise,
+                instanceId: uuidv4(),
+                sets: [{ id: uuidv4(), reps: '', weight: '', rpe: '', rest: '', is_warmup: false }],
+                notes: '',
+            };
+
+            return produce(state, draft => {
+                let targetDayIndex = dayIndex;
+
+                if (targetDayIndex === undefined) {
+                    if (draft.days.length > 0) {
+                        targetDayIndex = draft.days.length - 1;
+                    } else {
+                        draft.days.push({ id: uuidv4(), name: `Day 1`, groups: [], collapsed: false, notes: '' });
+                        targetDayIndex = 0;
+                    }
+                }
+
+                const day = draft.days[targetDayIndex];
+                if (!day) return; 
+
+                if (day.groups.length === 0) {
+                    day.groups.push({ id: uuidv4(), type: 'standard', exercises: [newExercise] });
+                } else {
+                    day.groups[day.groups.length - 1].exercises.push(newExercise);
+                }
+            });
+        }
+        case 'LOAD_TEMPLATE':
+            return action.payload;
+        default:
+            return state;
+    }
+}
+
+// Premium Exercise Card Component
+const PremiumExerciseCard = ({ exercise, onAdd, onInfoClick, isDragging = false }) => {
+    const muscleColors = getMuscleGroupColors(exercise.bodyPart);
+    
+    return (
+        <motion.div
+            className={`${muscleColors.bg} ${muscleColors.border} border-2 rounded-xl p-3 cursor-grab active:cursor-grabbing transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5 ${isDragging ? 'opacity-50 scale-95' : ''}`}
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.99 }}
+        >
+            <div className="flex items-start justify-between">
+                <div className="flex items-center space-x-2 flex-1">
+                    <div className={`w-3 h-3 ${muscleColors.accent} rounded-full flex-shrink-0 shadow-sm`}></div>
+                    <div className="flex-1 min-w-0">
+                        <h3 className={`font-bold ${muscleColors.text} text-sm leading-tight`}>{exercise.name}</h3>
+                        <div className="flex items-center space-x-1 mt-1">
+                            <span className={`text-xs px-2 py-0.5 ${muscleColors.text} bg-white/70 rounded-full font-medium shadow-sm`}>
+                                {exercise.bodyPart}
+                            </span>
+                            {exercise.target && (
+                                <span className="text-xs text-gray-600 bg-white/70 px-2 py-0.5 rounded-full font-medium shadow-sm">
+                                    {exercise.target}
+                                </span>
+                            )}
+                            {exercise.equipment && (
+                                <span className="text-xs text-gray-600 bg-white/70 px-2 py-0.5 rounded-full font-medium shadow-sm">
+                                    {Array.isArray(exercise.equipment) ? exercise.equipment.join(', ') : exercise.equipment}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+                <div className="flex items-center space-x-1 ml-1">
+                    <button
+                        onClick={() => onInfoClick(exercise)}
+                        className="w-7 h-7 bg-white/80 hover:bg-white rounded-full flex items-center justify-center shadow-sm transition-colors"
+                    >
+                        <Info className="w-3 h-3 text-gray-600" />
+                    </button>
+                    <button
+                        onClick={() => onAdd(exercise)}
+                        className={`w-7 h-7 bg-gradient-to-r ${muscleColors.gradient} text-white rounded-full flex items-center justify-center shadow-sm hover:shadow-md transition-all`}
+                    >
+                        <Plus className="w-3 h-3" />
+                    </button>
+                </div>
+            </div>
+        </motion.div>
+    );
+};
+
+// Enhanced Draggable Exercise Component
+const DraggableExercise = ({ exercise, onAdd, onInfoClick }) => {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        isDragging,
+    } = useDraggable({
+        id: exercise.id,
+        data: {
+            type: 'exercise',
+            item: exercise,
+        },
+    });
+
+    const style = {
+        transform: CSS.Translate.toString(transform),
+        zIndex: isDragging ? 1000 : 1,
+    };
+
+    return (
+        <div ref={setNodeRef} style={style} {...listeners} {...attributes}>
+            <PremiumExerciseCard 
+                exercise={exercise} 
+                onAdd={onAdd} 
+                onInfoClick={onInfoClick}
+                isDragging={isDragging}
+            />
+        </div>
+    );
+};
+
+// Enhanced Droppable Group Component
+const DroppableGroup = ({ dayIndex, groupIndex, group, dispatch, children }) => {
+    const { isOver, setNodeRef } = useDroppable({
+        id: `group-${dayIndex}-${groupIndex}`,
+        data: {
+            type: 'group',
+            dayIndex,
+            groupIndex,
+        },
+    });
+
+    const toggleDropset = () => {
+        dispatch({ type: 'TOGGLE_DROPSET', payload: { dayIndex, groupIndex } });
+    };
+
+    const toggleSuperset = () => {
+        dispatch({ type: 'TOGGLE_SUPERSET', payload: { dayIndex, groupIndex } });
+    };
+
+    return (
+        <motion.div
+            ref={setNodeRef}
+            className={`min-h-[120px] border-2 border-dashed rounded-2xl p-4 transition-all duration-200 ${
+                isOver 
+                    ? 'border-blue-400 bg-blue-50' 
+                    : 'border-gray-200 bg-gray-50/50 hover:bg-gray-50'
+            }`}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+        >
+            <div className="flex justify-end space-x-2 mb-2">
+                <button
+                    onClick={toggleDropset}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                        group.is_dropset ? 'bg-purple-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                >
+                    Dropset
+                </button>
+                <button
+                    onClick={toggleSuperset}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                        group.is_superset ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                >
+                    Superset
+                </button>
+            </div>
+            {group.exercises.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-gray-400 py-8">
+                    <Layers className="w-8 h-8 mb-2" />
+                    <p className="text-sm font-medium">Drop exercises here</p>
+                    <p className="text-xs">or click + to add manually</p>
+                </div>
+            ) : (
+                <div className="space-y-3">
+                    {children}
+                </div>
+            )}
+        </motion.div>
+    );
+};
+
+// Enhanced Sortable Day Component
+const SortableDay = ({ day, dayIndex, dispatch, children }) => {
+    const [showColorPicker, setShowColorPicker] = useState(false);
+    
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+        isDragging,
+    } = useSortable({
+        id: day.id,
+        data: {
+            type: 'day',
+            dayIndex,
+        },
+    });
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 1000 : 1,
+    };
+
+    // Get current theme or default to first theme
+    const currentTheme = DAY_COLOR_THEMES.find(theme => theme.id === day.colorTheme) || DAY_COLOR_THEMES[0];
+
+    const addGroup = () => {
+        dispatch({ type: 'ADD_GROUP', payload: { dayIndex } });
+    };
+
+    const updateDayName = (e) => {
+        dispatch({ type: 'UPDATE_DAY_NAME', payload: { dayIndex, name: e.target.value } });
+    };
+
+    const updateDayNotes = (e) => {
+        dispatch({ type: 'UPDATE_DAY_NOTES', payload: { dayIndex, notes: e.target.value } });
+    };
+
+    const updateDayColor = (colorTheme) => {
+        dispatch({ type: 'UPDATE_DAY_COLOR', payload: { dayIndex, colorTheme } });
+        setShowColorPicker(false);
+    };
+
+    const toggleCollapse = () => {
+        dispatch({ type: 'TOGGLE_DAY_COLLAPSE', payload: { dayIndex } });
+    };
+
+    return (
+        <motion.div
+            ref={setNodeRef}
+            style={style}
+            className={`bg-white rounded-3xl shadow-lg border border-gray-100 overflow-hidden ${isDragging ? 'shadow-2xl' : ''}`}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            transition={{ duration: 0.3 }}
+        >
+            {/* Day Header */}
+            <div className={`bg-gradient-to-r ${currentTheme.gradient} p-6 relative`}>
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-4 flex-1">
+                        <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
+                            <GripVertical className="w-6 h-6 text-white/80 hover:text-white transition-colors" />
+                        </div>
+                        <input
+                            type="text"
+                            value={day.name}
+                            onChange={updateDayName}
+                            className="bg-white/20 text-white placeholder-white/70 border-0 rounded-xl px-4 py-2 text-xl font-bold focus:bg-white/30 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all"
+                            placeholder="Day Name"
+                        />
+                    </div>
+                    <div className="flex items-center space-x-2">
+                        {/* Color Picker Button */}
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowColorPicker(!showColorPicker)}
+                                className="w-10 h-10 bg-white/20 hover:bg-white/30 rounded-xl flex items-center justify-center transition-colors"
+                                title="Change day color"
+                            >
+                                <div className="w-5 h-5 bg-white/80 rounded-full"></div>
+                            </button>
+                            
+                            {/* Color Picker Dropdown */}
+                            <AnimatePresence>
+                                {showColorPicker && (
+                                    <motion.div
+                                        initial={{ opacity: 0, scale: 0.95, y: -10 }}
+                                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                                        exit={{ opacity: 0, scale: 0.95, y: -10 }}
+                                        className="absolute top-12 right-0 bg-white rounded-2xl shadow-xl border border-gray-200 p-4 z-50 min-w-[280px]"
+                                    >
+                                        <h4 className="text-sm font-semibold text-gray-700 mb-3">Choose Day Color</h4>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {DAY_COLOR_THEMES.map((theme) => (
+                                                <button
+                                                    key={theme.id}
+                                                    onClick={() => updateDayColor(theme.id)}
+                                                    className={`flex items-center space-x-3 p-3 rounded-xl transition-all hover:scale-105 ${
+                                                        currentTheme.id === theme.id 
+                                                            ? 'ring-2 ring-blue-500 bg-blue-50' 
+                                                            : 'hover:bg-gray-50'
+                                                    }`}
+                                                >
+                                                    <div className={`w-6 h-6 bg-gradient-to-r ${theme.gradient} rounded-full shadow-sm`}></div>
+                                                    <div className="text-left">
+                                                        <div className="text-sm font-medium text-gray-900">{theme.name}</div>
+                                                    </div>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </div>
+                        
+                        <button
+                            onClick={addGroup}
+                            className="w-10 h-10 bg-white/20 hover:bg-white/30 rounded-xl flex items-center justify-center transition-colors"
+                        >
+                            <Plus className="w-5 h-5 text-white" />
+                        </button>
+                        <button
+                            onClick={toggleCollapse}
+                            className="w-10 h-10 bg-white/20 hover:bg-white/30 rounded-xl flex items-center justify-center transition-colors"
+                        >
+                            {day.collapsed ? <Maximize2 className="w-5 h-5 text-white" /> : <Minimize2 className="w-5 h-5 text-white" />}
+                        </button>
+                    </div>
+                </div>
+                
+                {/* Day Notes */}
+                <div className="mt-4">
+                    <textarea
+                        value={day.notes}
+                        onChange={updateDayNotes}
+                        placeholder="Add notes for this day..."
+                        className="w-full bg-white/20 text-white placeholder-white/70 border-0 rounded-xl px-4 py-3 text-sm focus:bg-white/30 focus:outline-none focus:ring-2 focus:ring-white/50 transition-all resize-none"
+                        rows="2"
+                    />
+                </div>
+            </div>
+
+            {/* Day Content */}
+            <AnimatePresence>
+                {!day.collapsed && (
+                    <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className={`p-6 space-y-6 bg-gradient-to-br ${currentTheme.lightGradient}`}
+                    >
+                        {children}
+                        
+                        {/* Add Group Button */}
+                        <motion.button
+                            onClick={addGroup}
+                            className={`w-full py-4 border-2 border-dashed border-gray-300 rounded-2xl text-gray-500 hover:border-opacity-60 hover:bg-white/50 transition-all duration-200 flex items-center justify-center space-x-2`}
+                            style={{
+                                borderColor: currentTheme.gradient.includes('blue') ? '#3b82f6' : 
+                                           currentTheme.gradient.includes('emerald') ? '#10b981' :
+                                           currentTheme.gradient.includes('orange') ? '#f97316' :
+                                           currentTheme.gradient.includes('purple') ? '#8b5cf6' :
+                                           currentTheme.gradient.includes('indigo') ? '#6366f1' :
+                                           currentTheme.gradient.includes('green') ? '#22c55e' :
+                                           currentTheme.gradient.includes('yellow') ? '#eab308' :
+                                           '#f43f5e'
+                            }}
+                            whileHover={{ scale: 1.01 }}
+                            whileTap={{ scale: 0.99 }}
+                        >
+                            <Plus className="w-5 h-5" />
+                            <span className="font-medium">Add Exercise Group</span>
+                        </motion.button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </motion.div>
+    );
+};
+
+// Enhanced Sortable Exercise Component
+const SortableExercise = ({ exercise, dayIndex, groupIndex, dispatch, onInfoClick }) => {
+    const [isEditingName, setIsEditingName] = useState(false);
+    const [editedName, setEditedName] = useState(exercise.name);
+    const [showSaveOptions, setShowSaveOptions] = useState(false);
+
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+        isDragging,
+    } = useSortable({
+        id: exercise.instanceId,
+        data: {
+            type: 'sortable-exercise',
+            from: { dayIndex, groupIndex },
+        },
+    });
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 1000 : 1,
+    };
+
+    const muscleColors = getMuscleGroupColors(exercise.bodyPart);
+
+    const handleDetailChange = (setIndex, field, value) => {
+        dispatch({
+            type: 'UPDATE_EXERCISE_DETAIL',
+            payload: { dayIndex, groupIndex, exerciseInstanceId: exercise.instanceId, setIndex, field, value }
+        });
+    };
+
+    const handleNotesChange = (value) => {
+        dispatch({
+            type: 'UPDATE_EXERCISE_NOTES',
+            payload: { dayIndex, groupIndex, exerciseInstanceId: exercise.instanceId, notes: value }
+        });
+    };
+
+    const addSet = () => {
+        dispatch({
+            type: 'ADD_SET',
+            payload: { dayIndex, groupIndex, exerciseInstanceId: exercise.instanceId }
+        });
+    };
+
+    const removeSet = (setIndex) => {
+        dispatch({
+            type: 'REMOVE_SET',
+            payload: { dayIndex, groupIndex, exerciseInstanceId: exercise.instanceId, setIndex }
+        });
+    };
+
+    const toggleWarmup = (setIndex) => {
+        dispatch({
+            type: 'TOGGLE_WARMUP_SET',
+            payload: { dayIndex, groupIndex, exerciseInstanceId: exercise.instanceId, setIndex }
+        });
+    };
+
+    const removeExercise = () => {
+        dispatch({
+            type: 'REMOVE_EXERCISE',
+            payload: { dayIndex, groupIndex, exerciseInstanceId: exercise.instanceId }
+        });
+    };
+
+    const handleEditNameClick = () => {
+        setIsEditingName(true);
+        setEditedName(exercise.name);
+    };
+
+    const handleNameChange = (e) => {
+        setEditedName(e.target.value);
+    };
+
+    const handleSaveName = async (saveAsNew = false) => {
+        if (editedName.trim() === '') {
+            toast.error("Exercise name cannot be empty.");
+            return;
+        }
+
+        if (saveAsNew) {
+            try {
+                const newExercisePayload = {
+                    ...exercise, // Copy existing properties
+                    name: editedName, // Use the new name
+                    id: undefined, // Ensure a new ID is generated by the backend
+                    instanceId: undefined // Ensure a new instanceId is generated if this is used for a new exercise
+                };
+                const response = await apiClient.createExercise(newExercisePayload);
+                toast.success(`New exercise "${response.name}" created!`);
+                // Update the current exercise in the template with the new name
+                dispatch({
+                    type: 'UPDATE_EXERCISE_NAME',
+                    payload: { dayIndex, groupIndex, exerciseInstanceId: exercise.instanceId, newName: editedName }
+                });
+            } catch (error) {
+                console.error("Failed to create new exercise:", error);
+                toast.error("Failed to create new exercise.");
+            }
+        } else {
+            dispatch({
+                type: 'UPDATE_EXERCISE_NAME',
+                payload: { dayIndex, groupIndex, exerciseInstanceId: exercise.instanceId, newName: editedName }
+            });
+            toast.success("Exercise name updated for this template.");
+        }
+        setIsEditingName(false);
+        setShowSaveOptions(false);
+    };
+
+    const handleCancelEdit = () => {
+        setIsEditingName(false);
+        setEditedName(exercise.name);
+        setShowSaveOptions(false);
+    };
+
+    return (
+        <motion.div
+            ref={setNodeRef}
+            style={style}
+            className={`${muscleColors.bg} ${muscleColors.border} border-2 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all duration-200 ${isDragging ? 'shadow-xl scale-105' : ''}`}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+        >
+            {/* Exercise Header */}
+            <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center space-x-3 flex-1">
+                    <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
+                        <GripVertical className={`w-5 h-5 ${muscleColors.text} opacity-60 hover:opacity-100 transition-opacity`} />
+                    </div>
+                    <div className="flex-1">
+                        {isEditingName ? (
+                            <div className="flex items-center space-x-2">
+                                <input
+                                    type="text"
+                                    value={editedName}
+                                    onChange={handleNameChange}
+                                    className="bg-white/70 text-gray-900 border border-gray-300 rounded-lg px-3 py-1 text-lg font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                                <div className="relative">
+                                    <button
+                                        onClick={() => setShowSaveOptions(!showSaveOptions)}
+                                        className="w-8 h-8 bg-blue-500 hover:bg-blue-600 text-white rounded-full flex items-center justify-center transition-colors"
+                                        title="Save options"
+                                    >
+                                        <CheckCircle className="w-4 h-4" />
+                                    </button>
+                                    <AnimatePresence>
+                                        {showSaveOptions && (
+                                            <motion.div
+                                                initial={{ opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: 10 }}
+                                                className="absolute top-full left-0 mt-2 bg-white border border-gray-200 rounded-lg shadow-lg z-10"
+                                            >
+                                                <button
+                                                    onClick={() => handleSaveName(false)}
+                                                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                                >
+                                                    Save for this workout
+                                                </button>
+                                                <button
+                                                    onClick={() => handleSaveName(true)}
+                                                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                                >
+                                                    Save as new exercise
+                                                </button>
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
+                                </div>
+                                <button
+                                    onClick={handleCancelEdit}
+                                    className="w-8 h-8 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-full flex items-center justify-center transition-colors"
+                                    title="Cancel edit"
+                                >
+                                    <X className="w-4 h-4" />
+                                </button>
+                            </div>
+                        ) : (
+                            <h3 className={`font-bold ${muscleColors.text} text-lg flex items-center`}>
+                                {exercise.name}
+                                <button
+                                    onClick={handleEditNameClick}
+                                    className="ml-2 p-1 rounded-full hover:bg-gray-100 transition-colors"
+                                    title="Edit exercise name"
+                                >
+                                    <Edit3 className="w-4 h-4 text-gray-500" />
+                                </button>
+                            </h3>
+                        )}
+                        <div className="flex items-center space-x-2 mt-1">
+                            <span className={`text-xs px-3 py-1 ${muscleColors.text} bg-white/70 rounded-full font-medium`}>
+                                {muscleColors.name}
+                            </span>
+                            {exercise.equipment && (
+                                <span className="text-xs text-gray-600 bg-white/70 px-3 py-1 rounded-full font-medium">
+                                    {exercise.equipment}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                    <button
+                        onClick={() => onInfoClick(exercise)}
+                        className="w-8 h-8 bg-white/80 hover:bg-white rounded-full flex items-center justify-center shadow-sm transition-colors"
+                    >
+                        <Info className="w-4 h-4 text-gray-600" />
+                    </button>
+                    <button
+                        onClick={removeExercise}
+                        className="w-8 h-8 bg-red-100 hover:bg-red-200 rounded-full flex items-center justify-center shadow-sm transition-colors"
+                    >
+                        <Trash2 className="w-4 h-4 text-red-600" />
+                    </button>
+                </div>
+            </div>
+
+            {/* Sets Table */}
+            <div className="space-y-3">
+                <div className="grid grid-cols-6 gap-2 text-xs font-medium text-gray-600 uppercase tracking-wider px-2">
+                    <span>Set</span>
+                    <span>Reps</span>
+                    <span>Weight</span>
+                    <span>RPE</span>
+                    <span>Rest</span>
+                    <span>Actions</span>
+                </div>
+                
+                {exercise.sets.map((set, setIndex) => (
+                    <motion.div
+                        key={set.id}
+                        className={`grid grid-cols-6 gap-2 p-2 rounded-xl ${set.is_warmup ? 'bg-yellow-50 border border-yellow-200' : 'bg-white/70'}`}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: setIndex * 0.05 }}
+                    >
+                        <div className="flex items-center">
+                            <span className={`text-sm font-medium ${set.is_warmup ? 'text-yellow-700' : 'text-gray-700'}`}>
+                                {set.is_warmup ? 'W' : setIndex + 1}
+                            </span>
+                        </div>
+                        <input
+                            type="text"
+                            value={set.reps}
+                            onChange={(e) => handleDetailChange(setIndex, 'reps', e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="12"
+                        />
+                        <input
+                            type="text"
+                            value={set.weight}
+                            onChange={(e) => handleDetailChange(setIndex, 'weight', e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="135"
+                        />
+                        <input
+                            type="text"
+                            value={set.rpe}
+                            onChange={(e) => handleDetailChange(setIndex, 'rpe', e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="8"
+                        />
+                        <input
+                            type="text"
+                            value={set.rest}
+                            onChange={(e) => handleDetailChange(setIndex, 'rest', e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="90s"
+                        />
+                        <div className="flex items-center space-x-1">
+                            <button
+                                onClick={() => toggleWarmup(setIndex)}
+                                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors ${
+                                    set.is_warmup 
+                                        ? 'bg-yellow-200 text-yellow-700' 
+                                        : 'bg-gray-200 text-gray-600 hover:bg-gray-300'
+                                }`}
+                                title="Toggle warmup set"
+                            >
+                                <Flame className="w-3 h-3" />
+                            </button>
+                            {exercise.sets.length > 1 && (
+                                <button
+                                    onClick={() => removeSet(setIndex)}
+                                    className="w-7 h-7 bg-red-100 hover:bg-red-200 rounded-lg flex items-center justify-center transition-colors"
+                                >
+                                    <X className="w-3 h-3 text-red-600" />
+                                </button>
+                            )}
+                        </div>
+                    </motion.div>
+                ))}
+            </div>
+
+            {/* Add Set Button */}
+            <motion.button
+                onClick={addSet}
+                className="w-full mt-4 py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all duration-200 flex items-center justify-center space-x-2"
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.99 }}
+            >
+                <Plus className="w-4 h-4" />
+                <span className="text-sm font-medium">Add Set</span>
+            </motion.button>
+
+            {/* Exercise Notes */}
+            <div className="mt-4">
+                <textarea
+                    value={exercise.notes}
+                    onChange={(e) => handleNotesChange(e.target.value)}
+                    placeholder="Add notes for this exercise..."
+                    className="w-full px-4 py-3 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                    rows="2"
+                />
+            </div>
+        </motion.div>
+    );
+};
+
+// Main WorkoutEditor Component
+const WorkoutEditor = () => {
+    const { templateId } = useParams();
+    const navigate = useNavigate();
+    const [allExercises, setAllExercises] = useState([]);
+    const [filteredExercises, setFilteredExercises] = useState([]);
+    const [categories, setCategories] = useState([]);
+    const [muscles, setMuscles] = useState([]);
+    const [equipment, setEquipment] = useState([]);
+    
+    const [filters, setFilters] = useState({
+        search: '',
+        category: '',
+        muscle: '',
+        equipment: '',
+    });
+
+    const [state, dispatch] = useReducer(templateReducer, initialState);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [activeId, setActiveId] = useState(null);
+    const [saveStatus, setSaveStatus] = useState({ state: 'idle', message: '' });
+    const [selectedExercise, setSelectedExercise] = useState(null);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                setLoading(true);
+                const data = await apiClient.getExercises();
+                setAllExercises(data.exercises);
+                setFilteredExercises(data.exercises);
+                setCategories(data.categories);
+                setMuscles(data.muscles);
+                setEquipment(data.equipment);
+                setError(null);
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                setError(error.message || 'Failed to fetch data.');
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchData();
+    }, []);
+
+    useEffect(() => {
+        let result = allExercises;
+
+        if (filters.search) {
+            const searchWords = filters.search.toLowerCase().split(' ').filter(Boolean); // Split by space and remove empty strings
+            result = result.filter(exercise => {
+                const exerciseNameLower = exercise.name.toLowerCase();
+                return searchWords.every(word => exerciseNameLower.includes(word)); // Check if all search words are present
+            });
+        }
+
+        if (filters.category) {
+            result = result.filter(exercise => 
+                exercise.bodyPart === filters.category
+            );
+        }
+        
+        if (filters.muscle) {
+            result = result.filter(exercise => 
+                (exercise.target && exercise.target.toLowerCase() === filters.muscle.toLowerCase()) ||
+                (exercise.secondaryMuscles && (Array.isArray(exercise.secondaryMuscles) ? exercise.secondaryMuscles : [exercise.secondaryMuscles]).some(m => m.toLowerCase() === filters.muscle.toLowerCase()))
+            );
+        }
+
+        if (filters.equipment) {
+            result = result.filter(exercise => 
+                (exercise.equipment && (Array.isArray(exercise.equipment) ? exercise.equipment : [exercise.equipment]).some(e => e.toLowerCase() === filters.equipment.toLowerCase()))
+            );
+        }
+
+        setFilteredExercises(result);
+    }, [filters, allExercises]);
+
+    const handleFilterChange = (e) => {
+        const { name, value } = e.target;
+        setFilters(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleDragStart = (event) => {
+        setActiveId(event.active.id);
+    };
+
+    const handleDragEnd = ({ over, active }) => {
+        setActiveId(null);
+        if (!over) return;
+        
+        const activeId = active.id;
+        const overId = over.id;
+        const activeType = active.data.current?.type;
+        const overType = over.data.current?.type;
+
+        if (activeType === 'day' && overType === 'day' && activeId !== overId) {
+            const oldIndex = state.days.findIndex(d => d.id === activeId);
+            const newIndex = state.days.findIndex(d => d.id === overId);
+            dispatch({ type: 'REORDER_DAYS', payload: { oldIndex, newIndex } });
+            return;
+        }
+
+        const [overDayIndex, overGroupIndex] = over.id.toString().replace('group-', '').split('-').map(Number);
+
+        if (activeType === 'exercise' && overId.toString().startsWith('group-')) {
+            dispatch({ 
+                type: 'ADD_EXERCISE', 
+                payload: { 
+                    dayIndex: overDayIndex, 
+                    groupIndex: overGroupIndex, 
+                    exercise: active.data.current.item 
+                } 
+            });
+            return;
+        }
+
+        if (activeType === 'sortable-exercise') {
+            const { dayIndex: oldDayIndex, groupIndex: oldGroupIndex } = active.data.current.from;
+            const oldExerciseIndex = state.days[oldDayIndex].groups[oldGroupIndex].exercises.findIndex(ex => ex.instanceId === activeId);
+            
+            let newDayIndex, newGroupIndex, newExerciseIndex;
+
+            if (overType === 'sortable-exercise') {
+                const { dayIndex: dropDayIndex, groupIndex: dropGroupIndex } = over.data.current.from;
+                newDayIndex = dropDayIndex;
+                newGroupIndex = dropGroupIndex;
+                newExerciseIndex = state.days[dropDayIndex].groups[dropGroupIndex].exercises.findIndex(ex => ex.instanceId === overId);
+            } else if (overId.toString().startsWith('group-')) {
+                const [dayIdx, groupIdx] = overId.toString().replace('group-', '').split('-').map(Number);
+                newDayIndex = dayIdx;
+                newGroupIndex = groupIdx;
+                newExerciseIndex = state.days[dayIdx].groups[groupIdx].exercises.length;
+            } else {
+                return;
+            }
+
+            if (oldDayIndex === newDayIndex) {
+                 dispatch({ type: 'REORDER_EXERCISES', payload: { dayIndex: oldDayIndex, oldGroupIndex, newGroupIndex, oldExerciseIndex, newExerciseIndex } });
+            } else {
+                 dispatch({ type: 'MOVE_EXERCISE_TO_DIFFERENT_DAY', payload: { oldDayIndex, newDayIndex, oldGroupIndex, newGroupIndex, oldExerciseIndex, newExerciseIndex } });
+            }
+        }
+
+        if (active.data.current?.type === 'exercise' && over) {
+            const exercise = active.data.current.item;
+
+            if (over.id.toString().startsWith('group-')) {
+                const [dayIndex, groupIndex] = over.id.toString().replace('group-', '').split('-').map(Number);
+                dispatch({
+                    type: 'ADD_EXERCISE',
+                    payload: { dayIndex, groupIndex, exercise }
+                });
+                return;
+            }
+
+            const overIsDay = over.data.current?.type === 'day';
+            if (overIsDay) {
+                const dayIndex = state.days.findIndex(d => d.id === over.id);
+                if (dayIndex !== -1) {
+                    dispatch({
+                        type: 'ADD_EXERCISE_WITH_AUTO_CREATE',
+                        payload: { exercise, dayIndex }
+                    });
+                }
+                return;
+            }
+        }
+    };
+
+    const handleSaveTemplate = async () => {
+        if (!state.name.trim()) {
+            toast.error("Please enter a template name.");
+            return;
+        }
+        if (state.days.length === 0) {
+            toast.error("Please add at least one day to the template.");
+            return;
+        }
+
+        setSaveStatus({ state: 'saving', message: 'Saving...' });
+        try {
+            const sanitizedDays = state.days.map(day => ({
+                id: day.id,
+                name: day.name,
+                notes: day.notes,
+                collapsed: day.collapsed,
+                groups: day.groups.map(group => ({
+                    id: group.id,
+                    name: group.name,
+                    is_dropset: group.is_dropset || false,
+                    is_superset: group.is_superset || false,
+                    exercises: group.exercises.map(ex => ({
+                        id: ex.id,
+                        instanceId: ex.instanceId,
+                        name: ex.name,
+                        bodyPart: ex.bodyPart,
+                        equipment: ex.equipment,
+                        sets: ex.sets.map(set => ({
+                            id: set.id,
+                            reps: set.reps,
+                            weight: set.weight,
+                            rpe: set.rpe,
+                            rest: set.rest,
+                            is_warmup: set.is_warmup || false
+                        })),
+                        notes: ex.notes || ''
+                    }))
+                }))
+            }));
+
+            const templatePayload = {
+                name: state.name,
+                days: sanitizedDays
+            };
+            
+            if (templateId) {
+                await apiClient.updateWorkoutTemplate(templateId, templatePayload);
+            } else {
+                await apiClient.createWorkoutTemplate(templatePayload);
+            }
+
+            setSaveStatus({ state: 'success', message: 'Template saved successfully!' });
+            setTimeout(() => setSaveStatus({ state: 'idle', message: '' }), 3000);
+        } catch (error) {
+            console.error("Failed to save template", error);
+            setSaveStatus({ state: 'error', message: `Failed to save: ${error.message}` });
+        }
+    };
+
+    const handleAddExerciseFromLibrary = (exercise) => {
+        dispatch({
+            type: 'ADD_EXERCISE_WITH_AUTO_CREATE',
+            payload: { exercise }
+        });
+        toast.success(`"${exercise.name}" added!`);
+    };
+
+    const handleOpenExerciseModal = (exercise) => {
+        setSelectedExercise(exercise);
+    };
+
+    const handleCloseExerciseModal = () => {
+        setSelectedExercise(null);
+    };
+
+    const addDay = () => {
+        dispatch({ type: 'ADD_DAY' });
+    };
+
+    const updateTemplateName = (e) => {
+        dispatch({ type: 'SET_TEMPLATE_NAME', payload: e.target.value });
+    };
+
+    if (loading) {
+        return (
+            <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 flex items-center justify-center">
+                <motion.div 
+                    className="text-center"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                >
+                    <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-6"></div>
+                    <h2 className="text-2xl font-bold text-gray-800 mb-2">Loading Workout Editor</h2>
+                    <p className="text-gray-600">Preparing your premium workout building experience...</p>
+                </motion.div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="min-h-screen bg-gradient-to-br from-red-50 to-pink-50 flex items-center justify-center">
+                <motion.div 
+                    className="text-center bg-white rounded-2xl p-8 shadow-xl"
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                >
+                    <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+                    <h2 className="text-2xl font-bold text-gray-800 mb-2">Something went wrong</h2>
+                    <p className="text-gray-600 mb-4">{error}</p>
+                    <button
+                        onClick={() => window.location.reload()}
+                        className="px-6 py-3 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors"
+                    >
+                        Try Again
+                    </button>
+                </motion.div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50">
+            {/* Premium Header */}
+            <motion.div 
+                className="bg-white shadow-lg border-b border-gray-200"
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+            >
+                <div className="max-w-7xl mx-auto px-6 py-6">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-4">
+                            <button
+                                onClick={() => navigate('/workout-dashboard')}
+                                className="w-12 h-12 bg-gray-100 hover:bg-gray-200 rounded-xl flex items-center justify-center transition-colors"
+                            >
+                                <ArrowLeft className="w-6 h-6 text-gray-600" />
+                            </button>
+                            <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
+                                <Crown className="w-6 h-6 text-white" />
+                            </div>
+                            <div>
+                                <h1 className="text-2xl font-bold text-gray-900">Premium Workout Builder</h1>
+                                <p className="text-gray-600">Create professional workout templates with advanced features</p>
+                            </div>
+                        </div>
+                        
+                        <div className="flex items-center space-x-4">
+                            {/* Save Status */}
+                            <AnimatePresence>
+                                {saveStatus.state !== 'idle' && (
+                                    <motion.div
+                                        initial={{ opacity: 0, x: 20 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        exit={{ opacity: 0, x: 20 }}
+                                        className={`flex items-center space-x-2 px-4 py-2 rounded-xl ${
+                                            saveStatus.state === 'saving' ? 'bg-blue-100 text-blue-700' :
+                                            saveStatus.state === 'success' ? 'bg-green-100 text-green-700' :
+                                            'bg-red-100 text-red-700'
+                                        }`}
+                                    >
+                                        {saveStatus.state === 'saving' && <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>}
+                                        {saveStatus.state === 'success' && <CheckCircle className="w-4 h-4" />}
+                                        {saveStatus.state === 'error' && <AlertCircle className="w-4 h-4" />}
+                                        <span className="text-sm font-medium">{saveStatus.message}</span>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                            
+                            <button
+                                onClick={handleSaveTemplate}
+                                disabled={saveStatus.state === 'saving'}
+                                className="flex items-center space-x-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:from-blue-700 hover:to-purple-700 transition-all shadow-lg hover:shadow-xl disabled:opacity-50"
+                            >
+                                <Save className="w-5 h-5" />
+                                <span className="font-medium">Save Template</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </motion.div>
+
+            <div className="flex">
+                {/* Exercise Library Sidebar */}
+                <motion.div 
+                    className={`${sidebarCollapsed ? 'w-16' : 'w-80'} bg-white border-r border-gray-200 transition-all duration-300 flex flex-col`}
+                    initial={{ x: -50, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                >
+                    {/* Sidebar Header */}
+                    <div className="p-4 border-b border-gray-200">
+                        <div className="flex items-center justify-between">
+                            {!sidebarCollapsed && (
+                                <div>
+                                    <h2 className="text-lg font-bold text-gray-900">Exercise Library</h2>
+                                    <p className="text-gray-600 text-xs">Drag exercises to your workout</p>
+                                </div>
+                            )}
+                            <button
+                                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                                className="w-8 h-8 bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center justify-center transition-colors"
+                            >
+                                {sidebarCollapsed ? <Maximize2 className="w-4 h-4" /> : <Minimize2 className="w-4 h-4" />}
+                            </button>
+                        </div>
+                    </div>
+
+                    {!sidebarCollapsed && (
+                        <>
+                            {/* Filters */}
+                            <div className="p-4 space-y-3 border-b border-gray-200">
+                                <div className="relative">
+                                    <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                    <input
+                                        type="text"
+                                        name="search"
+                                        value={filters.search}
+                                        onChange={handleFilterChange}
+                                        placeholder="Search exercises..."
+                                        className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                                    />
+                                </div>
+                                
+                                <div className="grid grid-cols-1 gap-2">
+                                    <select
+                                        name="category"
+                                        value={filters.category}
+                                        onChange={handleFilterChange}
+                                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                                    >
+                                        <option value="">All Body Parts</option>
+                                        {categories.map(category => (
+                                            <option key={category.id} value={category.name}>{category.name}</option>
+                                        ))}
+                                    </select>
+                                    <select
+                                        name="muscle"
+                                        value={filters.muscle}
+                                        onChange={handleFilterChange}
+                                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                                    >
+                                        <option value="">All Target Muscles</option>
+                                        {muscles.map(muscle => (
+                                            <option key={muscle.id} value={muscle.name}>{muscle.name}</option>
+                                        ))}
+                                    </select>
+                                    
+                                    <select
+                                        name="equipment"
+                                        value={filters.equipment}
+                                        onChange={handleFilterChange}
+                                        className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-transparent"
+                                    >
+                                        <option value="">All Equipment</option>
+                                        {equipment.map(eq => (
+                                            <option key={eq.id} value={eq.name}>{eq.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Exercise List */}
+                            <div className="flex-1 overflow-y-auto p-2">
+                                {filteredExercises.length > 0 ? (
+                                    <VirtualList
+                                        height={600} // Adjust height as needed
+                                        itemCount={filteredExercises.length}
+                                        itemSize={80} // Further adjusted item size for more compact view
+                                        width="100%"
+                                    >
+                                        {({ index, style }) => (
+                                            <div style={style}>
+                                                <DraggableExercise
+                                                    key={filteredExercises[index].id}
+                                                    exercise={filteredExercises[index]}
+                                                    onAdd={handleAddExerciseFromLibrary}
+                                                    onInfoClick={handleOpenExerciseModal}
+                                                />
+                                            </div>
+                                        )}
+                                    </VirtualList>
+                                ) : (
+                                    <div className="text-center py-8">
+                                        <Target className="w-10 h-10 text-gray-400 mx-auto mb-3" />
+                                        <p className="text-gray-500 text-sm">No exercises found</p>
+                                        <p className="text-gray-400 text-xs">Try adjusting your filters</p>
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    )}
+                </motion.div>
+
+                {/* Main Content */}
+                <div className="flex-1 overflow-y-auto">
+                    <div className="p-6">
+                        {/* Template Name Input */}
+                        <motion.div 
+                            className="mb-8"
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                        >
+                            <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-3">
+                                    Template Name
+                                </label>
+                                <input
+                                    type="text"
+                                    value={state.name}
+                                    onChange={updateTemplateName}
+                                    placeholder="Enter your workout template name..."
+                                    className="w-full px-4 py-4 text-xl font-bold border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                />
+                            </div>
+                        </motion.div>
+
+                        {/* Drag and Drop Context */}
+                        <DndContext
+                            collisionDetection={closestCenter}
+                            onDragStart={handleDragStart}
+                            onDragEnd={handleDragEnd}
+                        >
+                            {/* Days */}
+                            <SortableContext items={state.days.map(d => d.id)} strategy={verticalListSortingStrategy}>
+                                <div className="space-y-8">
+                                    {state.days.map((day, dayIndex) => (
+                                        <SortableDay
+                                            key={day.id}
+                                            day={day}
+                                            dayIndex={dayIndex}
+                                            dispatch={dispatch}
+                                        >
+                                            {day.groups.map((group, groupIndex) => (
+                                                <DroppableGroup
+                                                    key={group.id}
+                                                    dayIndex={dayIndex}
+                                                    groupIndex={groupIndex}
+                                                    group={group}
+                                                    dispatch={dispatch}
+                                                >
+                                                    <SortableContext items={group.exercises.map(ex => ex.instanceId)} strategy={verticalListSortingStrategy}>
+                                                        {group.exercises.map((exercise) => (
+                                                            <SortableExercise
+                                                                key={exercise.instanceId}
+                                                                exercise={exercise}
+                                                                dayIndex={dayIndex}
+                                                                groupIndex={groupIndex}
+                                                                dispatch={dispatch}
+                                                                onInfoClick={handleOpenExerciseModal}
+                                                            />
+                                                        ))}
+                                                    </SortableContext>
+                                                </DroppableGroup>
+                                            ))}
+                                        </SortableDay>
+                                    ))}
+                                </div>
+                            </SortableContext>
+
+                            {/* Drag Overlay */}
+                            <DragOverlay>
+                                {activeId ? (
+                                    <div className="opacity-80 transform rotate-3 scale-105">
+                                        {/* Render appropriate component based on what's being dragged */}
+                                    </div>
+                                ) : null}
+                            </DragOverlay>
+                        </DndContext>
+
+                        {/* Add Day Button */}
+                        <motion.div 
+                            className="mt-8"
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                        >
+                            <button
+                                onClick={addDay}
+                                className="w-full py-6 border-2 border-dashed border-gray-300 rounded-3xl text-gray-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all duration-200 flex items-center justify-center space-x-3"
+                            >
+                                <Plus className="w-6 h-6" />
+                                <span className="text-lg font-medium">Add New Day</span>
+                            </button>
+                        </motion.div>
+
+                        {/* Empty State */}
+                        {state.days.length === 0 && (
+                            <motion.div 
+                                className="text-center py-20"
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                            >
+                                <div className="w-24 h-24 bg-gradient-to-r from-blue-600 to-purple-600 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                                    <Sparkles className="w-12 h-12 text-white" />
+                                </div>
+                                <h3 className="text-2xl font-bold text-gray-800 mb-2">Start Building Your Workout</h3>
+                                <p className="text-gray-600 mb-8 max-w-md mx-auto">
+                                    Create a professional workout template by adding days and exercises. 
+                                    Drag exercises from the sidebar or click the buttons to get started.
+                                </p>
+                                <button
+                                    onClick={addDay}
+                                    className="px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:from-blue-700 hover:to-purple-700 transition-all shadow-lg hover:shadow-xl font-medium"
+                                >
+                                    Add Your First Day
+                                </button>
+                            </motion.div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Exercise Detail Modal */}
+            {selectedExercise && (
+                <ExerciseDetailModal
+                    exercise={selectedExercise}
+                    onClose={handleCloseExerciseModal}
+                />
+            )}
+        </div>
+    );
+};
+
+export default WorkoutEditor;
+
+==================================================
+File: frontend/src/components/ClientOnboardingPage.js
+==================================================
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import apiClient from '../api';
+import { toast } from 'react-hot-toast';
+import { ArrowLeft, UserPlus, CheckCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+
+const Section = ({ title, children, defaultOpen = false }) => {
+    const [isOpen, setIsOpen] = useState(defaultOpen);
+
+    return (
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="w-full flex justify-between items-center p-6 text-left"
+            >
+                <h2 className="text-xl font-bold text-gray-800">{title}</h2>
+                {isOpen ? <ChevronUp className="w-6 h-6 text-gray-500" /> : <ChevronDown className="w-6 h-6 text-gray-500" />}
+            </button>
+            <AnimatePresence>
+                {isOpen && (
+                    <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden"
+                    >
+                        <div className="p-6 border-t border-gray-200">
+                            {children}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+};
+
+const ClientOnboardingPage = () => {
+    const navigate = useNavigate();
+    const [clientData, setClientData] = useState({
+        name: '',
+        email: '',
+        phone: '',
+        age: '',
+        gender: '',
+        height: '',
+        weight: '',
+        bodyfat: '',
+        goals: '',
+        medical_history: '',
+        injuries: '',
+        lifestyle: '',
+        hours_sleep: '',
+        stress_level: 'low',
+        hydration_level: '',
+        nutrition_habits: '',
+        workout_history: '',
+        workout_frequency: '',
+        workout_preference: '',
+        workout_availability: '',
+    });
+
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setClientData(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!clientData.name || !clientData.email) {
+            toast.error('Client Name and Email are required.');
+            return;
+        }
+
+        try {
+            await apiClient.createClient(clientData);
+            toast.success('Client successfully onboarded!');
+            navigate('/trainer-dashboard'); // Or wherever you manage clients
+        } catch (error) {
+            console.error("Failed to create client:", error);
+            toast.error(`Failed to create client: ${error.message}`);
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-purple-50 p-8">
+            <div className="max-w-4xl mx-auto">
+                <motion.div
+                    initial={{ opacity: 0, y: -20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                >
+                    <button
+                        onClick={() => navigate(-1)}
+                        className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 mb-6"
+                    >
+                        <ArrowLeft className="w-5 h-5" />
+                        <span>Back</span>
+                    </button>
+                    <div className="flex items-center space-x-4 mb-8">
+                        <div className="w-16 h-16 bg-gradient-to-r from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center shadow-lg">
+                            <UserPlus className="w-8 h-8 text-white" />
+                        </div>
+                        <div>
+                            <h1 className="text-3xl font-bold text-gray-900">New Client Onboarding</h1>
+                            <p className="text-gray-600">Complete the form to add a new client to your roster.</p>
+                        </div>
+                    </div>
+                </motion.div>
+
+                <form onSubmit={handleSubmit} className="space-y-6">
+                    <Section title="Personal Information" defaultOpen={true}>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">Full Name*</label>
+                                <input type="text" name="name" id="name" value={clientData.name} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" required />
+                            </div>
+                            <div>
+                                <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email Address*</label>
+                                <input type="email" name="email" id="email" value={clientData.email} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" required />
+                            </div>
+                            <div>
+                                <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+                                <input type="tel" name="phone" id="phone" value={clientData.phone} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" />
+                            </div>
+                            <div>
+                                <label htmlFor="age" className="block text-sm font-medium text-gray-700 mb-1">Age</label>
+                                <input type="number" name="age" id="age" value={clientData.age} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" />
+                            </div>
+                            <div>
+                                <label htmlFor="gender" className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
+                                <select name="gender" id="gender" value={clientData.gender} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="">Select...</option>
+                                    <option value="male">Male</option>
+                                    <option value="female">Female</option>
+                                    <option value="other">Other</option>
+                                    <option value="prefer_not_to_say">Prefer not to say</option>
+                                </select>
+                            </div>
+                        </div>
+                    </Section>
+
+                    <Section title="Physical Metrics">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div>
+                                <label htmlFor="height" className="block text-sm font-medium text-gray-700 mb-1">Height (cm)</label>
+                                <input type="number" name="height" id="height" value={clientData.height} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" />
+                            </div>
+                            <div>
+                                <label htmlFor="weight" className="block text-sm font-medium text-gray-700 mb-1">Weight (kg)</label>
+                                <input type="number" name="weight" id="weight" value={clientData.weight} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" />
+                            </div>
+                            <div>
+                                <label htmlFor="bodyfat" className="block text-sm font-medium text-gray-700 mb-1">Body Fat %</label>
+                                <input type="number" name="bodyfat" id="bodyfat" value={clientData.bodyfat} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" />
+                            </div>
+                        </div>
+                    </Section>
+
+                    <Section title="Goals & Medical History">
+                        <div className="space-y-6">
+                            <div>
+                                <label htmlFor="goals" className="block text-sm font-medium text-gray-700 mb-1">Primary Fitness Goals</label>
+                                <textarea name="goals" id="goals" value={clientData.goals} onChange={handleChange} rows="4" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., lose weight, build muscle, improve endurance..."></textarea>
+                            </div>
+                            <div>
+                                <label htmlFor="medical_history" className="block text-sm font-medium text-gray-700 mb-1">Relevant Medical History</label>
+                                <textarea name="medical_history" id="medical_history" value={clientData.medical_history} onChange={handleChange} rows="4" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., past surgeries, chronic conditions..."></textarea>
+                            </div>
+                            <div>
+                                <label htmlFor="injuries" className="block text-sm font-medium text-gray-700 mb-1">Current or Past Injuries</label>
+                                <textarea name="injuries" id="injuries" value={clientData.injuries} onChange={handleChange} rows="4" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., knee pain, shoulder impingement..."></textarea>
+                            </div>
+                        </div>
+                    </Section>
+
+                    <Section title="Lifestyle & Habits">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label htmlFor="lifestyle" className="block text-sm font-medium text-gray-700 mb-1">Describe your daily activity level</label>
+                                <input type="text" name="lifestyle" id="lifestyle" value={clientData.lifestyle} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., sedentary desk job, active, etc." />
+                            </div>
+                            <div>
+                                <label htmlFor="hours_sleep" className="block text-sm font-medium text-gray-700 mb-1">Average hours of sleep per night</label>
+                                <input type="number" name="hours_sleep" id="hours_sleep" value={clientData.hours_sleep} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" />
+                            </div>
+                            <div>
+                                <label htmlFor="stress_level" className="block text-sm font-medium text-gray-700 mb-1">General stress level</label>
+                                <select name="stress_level" id="stress_level" value={clientData.stress_level} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500">
+                                    <option value="low">Low</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="high">High</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label htmlFor="hydration_level" className="block text-sm font-medium text-gray-700 mb-1">Daily water intake (in liters)</label>
+                                <input type="number" name="hydration_level" id="hydration_level" value={clientData.hydration_level} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" />
+                            </div>
+                            <div className="md:col-span-2">
+                                <label htmlFor="nutrition_habits" className="block text-sm font-medium text-gray-700 mb-1">Describe your current nutrition habits</label>
+                                <textarea name="nutrition_habits" id="nutrition_habits" value={clientData.nutrition_habits} onChange={handleChange} rows="4" className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., typical meals, dietary restrictions, etc."></textarea>
+                            </div>
+                        </div>
+                    </Section>
+
+                    <Section title="Exercise Background">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label htmlFor="workout_history" className="block text-sm font-medium text-gray-700 mb-1">Previous workout experience</label>
+                                <input type="text" name="workout_history" id="workout_history" value={clientData.workout_history} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., beginner, intermediate, advanced" />
+                            </div>
+                            <div>
+                                <label htmlFor="workout_frequency" className="block text-sm font-medium text-gray-700 mb-1">How many days per week can you train?</label>
+                                <input type="number" name="workout_frequency" id="workout_frequency" value={clientData.workout_frequency} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" />
+                            </div>
+                            <div className="md:col-span-2">
+                                <label htmlFor="workout_preference" className="block text-sm font-medium text-gray-700 mb-1">Preferred types of workouts</label>
+                                <input type="text" name="workout_preference" id="workout_preference" value={clientData.workout_preference} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., weightlifting, cardio, HIIT, yoga" />
+                            </div>
+                            <div className="md:col-span-2">
+                                <label htmlFor="workout_availability" className="block text-sm font-medium text-gray-700 mb-1">Days and times available to train</label>
+                                <input type="text" name="workout_availability" id="workout_availability" value={clientData.workout_availability} onChange={handleChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., Mon/Wed/Fri mornings" />
+                            </div>
+                        </div>
+                    </Section>
+
+                    <div className="flex justify-end pt-4">
+                        <button
+                            type="submit"
+                            className="flex items-center space-x-2 px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:from-blue-700 hover:to-purple-700 transition-all shadow-lg hover:shadow-xl font-medium"
+                        >
+                            <CheckCircle className="w-6 h-6" />
+                            <span>Onboard Client</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+export default ClientOnboardingPage;

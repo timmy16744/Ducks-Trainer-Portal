@@ -1,109 +1,123 @@
-# The Ultimate Self-Hosted Coaching Portal
+# Ducks Trainer Portal - The Ultimate Self-Hosted Coaching Platform
 
-This repository contains the complete application template for a self-hosted coaching portal, designed for personal trainers to manage clients, track progress, and deliver exceptional value under their own brand.
+This repository contains the complete application for the Ducks Trainer Portal, a self-hosted platform for personal trainers to manage clients, design workout programs, and track progress under their own brand.
 
-## Features
+This project is built with a **React frontend** and a **Flask backend**, using a **SQLite** database for data persistence.
 
-- **Enhanced Client Dashboard:** Experience a smooth, mobile-app-like interface with intuitive navigation and subtle animations.
-- **Comprehensive Client Onboarding**: A full-page onboarding form that combines personal details with a detailed assessment, providing a streamlined process for adding new clients.
-- **Client Management:** Add, organize, and manage clients with ease. Archive clients to hide them from the main view while retaining their data.
-- **Advanced Workout Builder**:
-    - **High-Performance Design**: Utilizes virtualization to smoothly handle large exercise libraries.
-    - **Dynamic Search**: Find exercises with an order-independent search that matches keywords in any sequence.
-    - **Customizable Themes**: Assign unique color themes to each workout day for better visual organization.
-    - **Inline Editing**: Edit exercise names directly within the builder and choose to save changes for the current template or create a new exercise.
-    - **Advanced Set Types**: Easily toggle dropsets and supersets for exercise groups.
-- **Program Builder**: Create multi-day workout programs and assign them to individual clients or groups.
-- **Group Management**: Organize clients into groups for easier management and bulk program assignment.
-- **Alerts Dashboard**: Stay on top of client activity, missed workouts, and other important notifications.
-- **Resource Hub**: A centralized location for uploading and sharing resources (e.g., PDFs, videos) with your clients.
-- **Nutrition Planning & Tracking:** Offer meal plans or allow clients to track their macros.
-- **Progress Visualization:** Track body stats, progress photos, and workout metrics with intuitive graphs.
-- **Real-time Communication:** Stay connected with your clients through an integrated chat feature.
-- **100% White-Label:** Your brand, your domain. No third-party branding.
+---
 
-## Styling
+## Key Features
 
-This project uses **Tailwind CSS** for styling. All components are styled using Tailwind's utility classes.
+- **Client Management**: A full-featured client roster with onboarding, archiving, and detailed profiles. All client information is editable directly within the UI.
+- **Dynamic Program Design**:
+  - **Exercise Library**: A comprehensive library of exercises, imported locally to ensure reliability.
+  - **Workout Editor**: Build custom workout templates with a drag-and-drop interface, supporting sets, reps, notes, and advanced types like supersets.
+  - **Program Dashboard**: Assign multi-day workout programs to individual clients or groups.
+- **Data-Driven Insights**:
+  - **Progress Tracking**: Monitor client body stats, workout logs, and more.
+  - **Alerts Dashboard**: Get notifications for important client events.
+- **Resource & Communication Hub**:
+  - Upload and share resources like PDFs and videos.
+  - Integrated chat for real-time communication.
+- **100% White-Label**: Your brand, your domain.
 
-## Deployment to Vercel (One-Click)
+---
 
-This application is designed for one-click deployment to Vercel. Follow these steps:
+## Tech Stack
 
-1.  **Purchase a License Key:** Obtain your unique lifetime license key from [Your Marketing Website Link Here].
-2.  **Clone this Repository:** Click the "Use this template" button on GitHub or clone this repository to your local machine.
-3.  **Connect to Vercel:**
-    -   Log in to your Vercel account (or sign up for free).
-    -   Click "Add New..." -> "Project".
-    -   Select "Import Git Repository" and choose your cloned repository.
-4.  **Configure Environment Variables:**
-    -   During the Vercel setup, you will be prompted to configure environment variables. Add the following:
-        -   `TRAINER_PASSWORD`: Set this to your desired password for trainer login.
-        -   `LICENSE_KEY`: Paste the unique license key you purchased.
-5.  **Deploy:** Click "Deploy". Vercel will automatically build and deploy your application.
-6.  **Connect Custom Domain (Optional):** After deployment, you can connect your custom domain in your Vercel project settings.
+- **Backend**: Flask with SQLAlchemy ORM
+- **Frontend**: React (Create React App) with Tailwind CSS
+- **Real-time Communication**: Flask-SocketIO
+- **Database**: SQLite
+- **Database Migrations**: Flask-Migrate with Alembic
 
-## Local Development
+---
 
-To run the application locally for development or testing:
+## Local Development Setup
+
+Follow these steps to get the application running on your local machine.
 
 ### Prerequisites
 
--   Python 3.8+
--   Node.js (LTS recommended)
--   npm or yarn
+- **Python** (3.8+ recommended)
+- **Node.js** (LTS version recommended) & **npm**
 
-### Backend Setup (Flask)
+### 1. Initial Setup (Run Once)
 
-1.  Navigate to the `backend` directory:
-    ```bash
-    cd backend
-    ```
-2.  Create a virtual environment and activate it:
-    ```bash
-    python -m venv venv
-    # On Windows:
-    # .venv\Scripts\activate
-    # On macOS/Linux:
-    # source venv/bin/activate
-    ```
-3.  Install dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
-    (You may need to create a `requirements.txt` file first by running `pip freeze > requirements.txt` after installing Flask, Flask-CORS, Flask-SocketIO, python-socketio, python-engineio, simple-websocket, bidict, wsproto)
-4.  Set environment variables (replace with your desired values):
-    ```bash
-    # On Windows (Command Prompt):
-    # set TRAINER_PASSWORD=your_trainer_password
-    # set LICENSE_KEY=your_license_key
-    # On Windows (PowerShell):
-    # $env:TRAINER_PASSWORD="your_trainer_password"
-    # $env:LICENSE_KEY="your_license_key"
-    # On macOS/Linux:
-    # export TRAINER_PASSWORD=your_trainer_password
-    # export LICENSE_KEY=your_license_key
-    ```
-5.  Run the Flask backend:
-    ```bash
-    python app.py
-    ```
+Clone the repository and install all dependencies from the project root directory.
 
-### Frontend Setup (React)
+```bash
+# Navigate to your project's root folder
+# e.g., C:\Users\timhu\Documents\Ducks Trainer Portal
 
-1.  Navigate to the `frontend` directory:
-    ```bash
-    cd frontend
-    ```
-2.  Install dependencies:
-    ```bash
-    npm install
-    # or yarn install
-    ```
-3.  Start the React development server:
-    ```bash
-    npm start
-    # or yarn start
-    ```
+# Install both frontend and backend dependencies
+npm install
+```
+*This command will run `npm install` in the `frontend` directory and `pip install -r requirements.txt` in the `backend` directory.*
 
-Your application should now be running locally. The backend will be on `http://localhost:5000` and the frontend on `http://localhost:3000`.
+### 2. Database Initialization (Run Once)
+
+Before you start the servers for the first time, you need to initialize the database and import the exercise library.
+
+```bash
+# From the project root folder:
+
+# 1. Create the initial database schema
+npm run db:upgrade
+
+# 2. Import the exercise library from the local JSON file
+npm run db:import-exercises
+```
+
+### 3. Running the Application
+
+To run the application, you need to start both the backend and frontend servers. It's recommended to do this in two separate terminals.
+
+**Terminal 1: Start the Backend (Flask)**
+
+```bash
+# Navigate to the backend directory
+cd backend
+
+# Start the Flask server
+python run.py
+```
+The backend will be running at `http://localhost:5000`.
+
+**Terminal 2: Start the Frontend (React)**
+
+```bash
+# Navigate to the frontend directory
+cd frontend
+
+# Start the React development server
+npm start
+```
+The frontend will open automatically in your browser at `http://localhost:3000`.
+
+---
+
+## Database Migrations Workflow
+
+As you develop the application, you will inevitably need to change the database schema by modifying `backend/models.py`. We have a simple, reliable workflow for this.
+
+After you have changed the `models.py` file, run the following two commands from the **project root directory**:
+
+**1. Create the Migration Script**
+
+This command detects your changes and generates a new migration file.
+
+```bash
+# Add a short, descriptive message about the changes
+npm run db:migrate -m "Your descriptive message here"
+```
+
+**2. Apply the Migration**
+
+This command applies the changes from the new migration file to your database.
+
+```bash
+npm run db:upgrade
+```
+
+That's it! Your database schema is now up-to-date with your models. There is no need to manually handle environment variables or change directories.

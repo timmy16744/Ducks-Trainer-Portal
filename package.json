@@ -7,10 +7,17 @@
     "start:backend": "cd backend && python app.py",
     "start:frontend": "cd frontend && npm start",
     "install:all": "cd frontend && npm install && cd ../backend && pip install -r requirements.txt",
-    "build": "cd frontend && npm run build"
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "db:migrate": "cd backend && cross-env FLASK_APP=app.py flask db migrate",
+    "db:upgrade": "cd backend && cross-env FLASK_APP=app.py flask db upgrade",
+    "db:downgrade": "cd backend && cross-env FLASK_APP=app.py flask db downgrade base",
+    "db:import-exercises": "python -c \"from backend.app import create_app; from backend.import_from_json import import_exercises_from_json; app = create_app(); app.app_context().push(); print(import_exercises_from_json())\""
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3"
   },
   "private": true,
   "dependencies": {
@@ -19,6 +26,9 @@
     "@dnd-kit/utilities": "^3.2.2",
     "immer": "^10.1.1",
     "react-beautiful-dnd": "^13.1.1",
-    "recharts": "^3.1.0"
+    "react-hot-toast": "^2.5.2",
+    "react-toastify": "^11.0.5",
+    "recharts": "^3.1.0",
+    "socket.io-client": "^4.8.1"
   }
 }

@@ -61,11 +61,31 @@ def migrate_data():
                 print(f"Skipping workout template {template_data.get('name')} due to duplicate ID: {template_data.get('id')}")
                 continue
 
+            # Prepare days field – support legacy 'exercises' key by wrapping into a single-day structure
+            if 'days' in template_data:
+                days_json = json.dumps(template_data['days'])
+            elif 'exercises' in template_data:
+                # Legacy flat exercises list -> wrap into a single day with one group
+                legacy_exercises = template_data['exercises']
+                days_json = json.dumps([
+                    {
+                        "dayName": "Day 1",
+                        "groups": [
+                            {
+                                "groupName": "Exercises",
+                                "exercises": legacy_exercises
+                            }
+                        ]
+                    }
+                ])
+            else:
+                days_json = json.dumps([])
+
             template = WorkoutTemplate(
                 id=template_data.get('id', f"wt_{uuid.uuid4()}"),
                 name=template_data.get('name'),
                 description=template_data.get('description'),
-                exercises=json.dumps(template_data.get('exercises', [])),
+                days=days_json,
                 tags=json.dumps(template_data.get('tags', []))
             )
             db.session.add(template)

@@ -5,3 +5,9 @@ schedule
 python-dateutil
 flask-caching
 sqlalchemy
+Flask-SQLAlchemy
+Flask-Migrate
+Flask-SocketIO
+eventlet
+python-dotenv
+alembic

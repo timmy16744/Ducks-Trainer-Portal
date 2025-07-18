@@ -2,6 +2,9 @@ import requests
 import json
 from datetime import datetime, timezone
 import os
+from .models import db, Exercise, Category, Muscle, Equipment
+import pathlib
+from urllib.parse import urlparse
 
 # TODO: For production, store this securely (e.g., environment variable)
 EXERCISEDB_API_KEY = "d609e59cdemshf0bba6158527178p1f3dd5jsn2048dd3f9fa0"
@@ -9,12 +12,13 @@ EXERCISEDB_BASE_URL = "https://exercisedb.p.rapidapi.com"
 
 def sync_exercises_from_exercisedb():
     """
-    Fetches all exercises from the ExerciseDB API using pagination, transforms them,
-    and saves them to backend/database/exercises.json.
+    Fetches all exercises from the ExerciseDB API, transforms them,
+    and saves them into the database efficiently.
     """
-    all_exercises = []
+    # --- Step 1: Fetch all data from API ---
+    all_exercises_data = []
     offset = 0
-    limit = 10  # Max limit for the Basic plan per request
+    limit = 100
 
     headers = {
         "x-rapidapi-host": "exercisedb.p.rapidapi.com",
@@ -22,9 +26,9 @@ def sync_exercises_from_exercisedb():
     }
     url = f"{EXERCISEDB_BASE_URL}/exercises"
 
+    print("Starting exercise fetch from ExerciseDB API...")
     while True:
         params = {"limit": limit, "offset": offset}
-        
         try:
             print(f"Fetching exercises with offset: {offset}...")
             response = requests.get(url, headers=headers, params=params)
@@ -35,123 +39,162 @@ def sync_exercises_from_exercisedb():
                 print("No more exercises to fetch.")
                 break
             
-            all_exercises.extend(batch)
-            offset += limit
+            all_exercises_data.extend(batch)
+            offset += len(batch)
 
         except requests.exceptions.RequestException as e:
             print(f"Error fetching data from ExerciseDB API: {e}")
-            return {"status": "error", "message": f"Failed to fetch data from ExerciseDB: {e}"}
+            return {"status": "error", "message": f"Failed to fetch data: {e}"}
 
-    print(f"Successfully fetched a total of {len(all_exercises)} exercises from API.")
+    print(f"Successfully fetched {len(all_exercises_data)} exercises from API. Processing...")
+
+    # --- Step 2: Process and save data in a single transaction ---
     
-    exercisedb_data = all_exercises
-    
-    # Initialize the new exercises.json structure
-    new_exercises_data = {
-        "exercises": [],
-        "categories": [],
-        "muscles": [],
-        "equipment": [],
-        "sync_info": {
-            "last_sync": datetime.now(timezone.utc).isoformat(),
-            "source_api": "ExerciseDB",
-            "total_exercises_synced": 0
-        }
-    }
+    # Caches to hold newly created related items (category, muscle, etc.)
+    # to avoid redundant database queries within the loop.
+    category_cache = {}
+    equipment_cache = {}
+    muscle_cache = {}
 
-    # Helper dictionaries to keep track of existing categories, muscles, and equipment
-    category_map = {}
-    muscle_map = {}
-    equipment_map = {}
+    media_root = pathlib.Path(__file__).parent / 'uploads' / 'exercise_media'
+    media_root.mkdir(parents=True, exist_ok=True)
 
-    category_id_counter = 1
-    muscle_id_counter = 1
-    equipment_id_counter = 1
-
-    for ex in exercisedb_data:
-        # Map ExerciseDB fields to your local schema
-        instructions_text = "\\n".join(ex.get("instructions", []))
+    def get_or_create_local(session, model, name, cache):
+        """
+        Local helper to get an object from cache or DB, 
+        or create it without committing.
+        """
+        if not name:
+            return None
+        if name in cache:
+            return cache[name]
         
-        # Using bodyPart as category
-        category_name = ex.get("bodyPart")
-        if category_name and category_name not in category_map:
-            category_map[category_name] = category_id_counter
-            new_exercises_data["categories"].append({"id": category_id_counter, "name": category_name})
-            category_id_counter += 1
-        
-        # Handle target muscles
-        exercise_muscles = []
-        target_muscle = ex.get("target")
-        if target_muscle and target_muscle not in muscle_map:
-            muscle_map[target_muscle] = muscle_id_counter
-            new_exercises_data["muscles"].append({"id": muscle_id_counter, "name": target_muscle})
-            muscle_id_counter += 1
-        if target_muscle:
-            exercise_muscles.append(muscle_map[target_muscle])
+        instance = session.query(model).filter_by(name=name).first()
+        if instance:
+            cache[name] = instance
+            return instance
+        else:
+            instance = model(name=name)
+            session.add(instance)
+            cache[name] = instance
+            return instance
 
-        # Handle secondary muscles
-        exercise_secondary_muscles = []
-        for sec_muscle in ex.get("secondaryMuscles", []):
-            if sec_muscle and sec_muscle not in muscle_map:
-                muscle_map[sec_muscle] = muscle_id_counter
-                new_exercises_data["muscles"].append({"id": muscle_id_counter, "name": sec_muscle})
-                muscle_id_counter += 1
-            if sec_muscle:
-                exercise_secondary_muscles.append(muscle_map[sec_muscle])
-
-        # Handle equipment
-        exercise_equipment = []
-        equipment_name = ex.get("equipment")
-        if equipment_name and equipment_name not in equipment_map:
-            equipment_map[equipment_name] = equipment_id_counter
-            new_exercises_data["equipment"].append({"id": equipment_id_counter, "name": equipment_name})
-            equipment_id_counter += 1
-        if equipment_name:
-            exercise_equipment.append(equipment_map[equipment_name])
-
-
-        new_exercises_data["exercises"].append({
-            "id": f"exr_exercisedb_{ex['id']}",
-            "exercisedb_id": ex["id"],
-            "name": ex.get("name", "Unknown Exercise"),
-            "instructions": instructions_text,
-            "gifUrl": ex.get("gifUrl", ""), 
-            "bodyPart": category_name,
-            "target": target_muscle,
-            "equipment": equipment_name,
-            "secondaryMuscles": ex.get("secondaryMuscles", []),
-            "difficulty": ex.get("difficulty", "intermediate"),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "is_custom": False
-        })
-
-    new_exercises_data["sync_info"]["total_exercises_synced"] = len(new_exercises_data["exercises"])
-
+    synced_count = 0
+    updated_any = False
     try:
-        # Define the correct path relative to the backend script
-        db_path = os.path.join(os.path.dirname(__file__), 'database', 'exercises.json')
-        db_dir = os.path.dirname(db_path)
+        for ex_data in all_exercises_data:
+            exercise_id = f"exr_exercisedb_{ex_data['id']}"
+            
+            # Skip if exercise already exists
+            if existing := db.session.query(Exercise).get(exercise_id):
+                # Update media path if missing
+                if existing.local_media_path is None:
+                    # Attempt to download
+                    gif_url = ex_data.get("gifUrl", "").strip()
+                    local_path = None
+                    if gif_url:
+                        file_ext = pathlib.Path(urlparse(gif_url).path).suffix or '.gif'
+                        filename = f"{exercise_id}{file_ext}"
+                        file_path = media_root / filename
+                        if not file_path.exists():
+                            try:
+                                resp = requests.get(gif_url, stream=True, timeout=20)
+                                resp.raise_for_status()
+                                with open(file_path, 'wb') as fd:
+                                    for chunk in resp.iter_content(chunk_size=8192):
+                                        if chunk:
+                                            fd.write(chunk)
+                            except Exception as dl_e:
+                                print(f"Failed to download {gif_url}: {dl_e}")
+                        if file_path.exists():
+                            local_path = str(file_path.relative_to(pathlib.Path(__file__).parent))
+                    if local_path:
+                        existing.local_media_path = local_path
+                        updated_any = True
+                # Update instructions if they are not stored as JSON array yet
+                try:
+                    json.loads(existing.instructions)
+                except Exception:
+                    # Reformat instructions
+                    instructions_data = ex_data.get("instructions", [])
+                    if isinstance(instructions_data, str):
+                        instructions_data = [instructions_data]
+                    existing.instructions = json.dumps([str(step).strip() for step in instructions_data if str(step).strip()])
+                    updated_any = True
 
-        # Ensure the database directory exists
-        if not os.path.exists(db_dir):
-            os.makedirs(db_dir)
+                continue
 
-        # Overwrite the old database/exercises.json
-        if os.path.exists(db_path):
-            os.remove(db_path)
+            # Get or create related objects using the local helper
+            category = get_or_create_local(db.session, Category, ex_data.get("bodyPart"), category_cache)
+            equipment = get_or_create_local(db.session, Equipment, ex_data.get("equipment"), equipment_cache)
+            
+            target_muscle = get_or_create_local(db.session, Muscle, ex_data.get("target"), muscle_cache)
+            
+            secondary_muscles = [
+                get_or_create_local(db.session, Muscle, m_name, muscle_cache) 
+                for m_name in ex_data.get("secondaryMuscles", [])
+            ]
+
+            all_muscles = {m for m in [target_muscle] + secondary_muscles if m}
+
+            # Download media
+            local_path = None
+            gif_url = ex_data.get("gifUrl", "").strip()
+            if gif_url:
+                file_ext = pathlib.Path(urlparse(gif_url).path).suffix or '.gif'
+                filename = f"{exercise_id}{file_ext}"
+                file_path = media_root / filename
+                if not file_path.exists():
+                    try:
+                        resp = requests.get(gif_url, stream=True, timeout=20)
+                        resp.raise_for_status()
+                        with open(file_path, 'wb') as fd:
+                            for chunk in resp.iter_content(chunk_size=8192):
+                                if chunk:
+                                    fd.write(chunk)
+                    except Exception as dl_e:
+                        print(f"Failed to download {gif_url}: {dl_e}")
+                if file_path.exists():
+                    local_path = str(file_path.relative_to(pathlib.Path(__file__).parent))
+
+            # Ensure instructions are stored as a JSON array of strings
+            instructions_data = ex_data.get("instructions", [])
+            if isinstance(instructions_data, str):
+                instructions_data = [instructions_data]
+            instructions_str = json.dumps([str(step).strip() for step in instructions_data if str(step).strip()])
+
+            new_exercise = Exercise(
+                id=exercise_id,
+                name=ex_data.get("name", "Unknown Exercise"),
+                instructions=instructions_str,
+                media_url=gif_url,
+                local_media_path=local_path,
+                category=category,
+                equipment=equipment,
+                muscles=list(all_muscles)
+            )
+            db.session.add(new_exercise)
+            synced_count += 1
         
-        with open(db_path, "w") as f:
-            json.dump(new_exercises_data, f, indent=2)
-        
-        print(f"Successfully synced and saved {len(new_exercises_data['exercises'])} exercises.")
-        return {"status": "success", "message": f"Successfully synced {len(new_exercises_data['exercises'])} exercises from ExerciseDB."}
-    except IOError as e:
-        print(f"Error writing to exercises.json: {e}")
-        return {"status": "error", "message": f"Failed to write exercises to file: {e}"}
+        # --- Step 3: Commit the entire transaction ---
+        if synced_count > 0 or updated_any:
+            print(f"Committing changes to the database (new: {synced_count}, updated: {updated_any})...")
+            db.session.commit()
+            print(f"Successfully synced and saved {synced_count} new exercises.")
+            return {"status": "success", "message": f"Synced {synced_count} new exercises. Updated media for existing exercises."}
+        else:
+            print("No new exercises to add or media to update. Database is already up-to-date.")
+            return {"status": "success", "message": "Database is already up-to-date."}
+
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-        return {"status": "error", "message": f"An unexpected error occurred: {e}"}
+        db.session.rollback()
+        print(f"An unexpected error occurred during database processing: {e}")
+        return {"status": "error", "message": f"Database processing failed: {e}"}
+
 
 if __name__ == '__main__':
-    sync_exercises_from_exercisedb() 
+    # This part needs to be run within a Flask app context to work
+    # from app import app
+    # with app.app_context():
+    #     sync_exercises_from_exercisedb()
+    print("This script must be run within a Flask application context.") 

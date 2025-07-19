@@ -31,7 +31,13 @@ def create_app():
     cache.init_app(app)
     
     allowed_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001").split(',')
-    CORS(app, supports_credentials=True, origins=allowed_origins)
+    CORS(app,
+         supports_credentials=True,
+         resources={r"/api/*": {
+             "origins": allowed_origins,
+             "allow_headers": ["Content-Type", "Authorization"],
+             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+         }})
     socketio.init_app(app, cors_allowed_origins=allowed_origins, async_mode='eventlet')
 
     with app.app_context():

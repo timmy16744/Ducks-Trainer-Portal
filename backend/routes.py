@@ -5,6 +5,7 @@ from datetime import date, datetime
 import uuid
 import os
 import urllib.parse
+import pathlib
 
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
@@ -264,6 +265,35 @@ def find_client(identifier):
 
 # In a real application, this would be a more secure way to handle secrets
 TRAINER_PASSWORD = os.environ.get("TRAINER_PASSWORD", "duck")
+
+LEGACY_JSON_DIR = pathlib.Path(__file__).resolve().parent / 'database'
+WORKOUT_ASSIGNMENTS_PATH = LEGACY_JSON_DIR / 'workout_assignments.json'
+WORKOUT_TEMPLATES_PATH = LEGACY_JSON_DIR / 'workout_templates.json'
+
+def _read_legacy_workout_assignments():
+    try:
+        import json
+        if WORKOUT_ASSIGNMENTS_PATH.exists():
+            with open(WORKOUT_ASSIGNMENTS_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+    except Exception as e:
+        app.logger.error(f"Error reading legacy workout assignments: {e}")
+    return []
+
+def _read_legacy_workout_templates():
+    try:
+        import json
+        if WORKOUT_TEMPLATES_PATH.exists():
+            with open(WORKOUT_TEMPLATES_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+    except Exception as e:
+        app.logger.error(f"Error reading legacy workout templates: {e}")
+    return []
+
+def _normalize_client_id(raw_id):
+    return raw_id.replace('/client/','') if raw_id.startswith('/client/') else raw_id
 
 # --- Decorators ---
 def protected(f):
@@ -545,19 +575,76 @@ def get_workout_assignments():
 @app.route("/api/clients/<client_id>/exercises", methods=["GET"])
 def get_client_exercises(client_id):
     """Gets exercises assigned to a specific client via their active program."""
-    program_assignment = ProgramAssignment.query.filter_by(client_id=client_id, active=True).first()
-    if not program_assignment:
-        return jsonify([])
+    norm_id = _normalize_client_id(client_id)
+    # Attempt to fetch active assignment; if DB not migrated, ignore error
+    try:
+        assignment = ProgramAssignment.query.filter_by(client_id=norm_id, active=True).first()
+    except Exception as e:
+        app.logger.warning(f"DB access error for ProgramAssignment: {e}. Falling back to legacy assignments.")
+        assignment = None
 
-    workout_template = WorkoutTemplate.query.get(program_assignment.template_id)
-    if not workout_template:
-        return jsonify([])
+    if not assignment:
+        # Fallback: legacy JSON assignments file
+        legacy_assignments = _read_legacy_workout_assignments()
+        legacy = next((a for a in legacy_assignments if a['client_id'] == client_id), None)
+        if legacy:
+            template = WorkoutTemplate.query.get(legacy['template_id'])
+            if template:
+                try:
+                    days_data = json.loads(template.days) if template.days else []
+                except json.JSONDecodeError:
+                    days_data = []
+                return jsonify({
+                    "assignmentId": legacy['id'],
+                    "startDate": legacy.get('date'),
+                    "currentDayIndex": 0,
+                    "workout": {
+                        "id": template.id,
+                        "templateId": template.id,
+                        "templateName": template.name,
+                        "days": days_data
+                    }
+                })
+        # else continue to default-empty response
+        return jsonify({
+            "workout": {
+                "id": "default-empty",
+                "templateId": "default-empty",
+                "templateName": "No workout scheduled",
+                "days": []
+            }
+        })
 
-    template_exercises = json.loads(workout_template.days)
-    exercise_ids = [ex['id'] for day in template_exercises for group in day['groups'] for ex in group['exercises']]
+    template = WorkoutTemplate.query.get(assignment.template_id)
 
-    exercises = Exercise.query.filter(Exercise.id.in_(exercise_ids)).all()
-    return jsonify([exercise_to_dict(e) for e in exercises])
+    if not template:
+        return jsonify({
+            "workout": {
+                "id": "default-empty",
+                "templateId": "default-empty",
+                "templateName": "No workout scheduled",
+                "days": []
+            }
+        })
+
+    try:
+        days_data = json.loads(template.days) if template.days else []
+    except json.JSONDecodeError:
+        days_data = []
+
+    payload = {
+        "assignmentId": assignment.id,
+        "startDate": assignment.start_date.isoformat() if assignment.start_date else None,
+        "currentDayIndex": assignment.current_day_index,
+        "workout": {
+            "id": template.id,
+            "templateId": template.id,
+            "templateName": template.name,
+            "days": days_data
+        }
+    }
+
+    return jsonify(payload)
 
 @app.route("/api/exercises", methods=["POST"])
 @protected
@@ -589,26 +676,71 @@ def serve_exercise_media(filename):
 # 1. Get the active workout program for a client
 @app.route("/api/clients/<client_id>/program/active", methods=["GET"])
 def get_active_program(client_id):
-    """Returns the currently active workout program (assignment + template details) for a client.
-
-    The response shape is designed for the front-end components that expect:
-
-    {
-        "assignmentId": str,
-        "startDate": "YYYY-MM-DD",
-        "currentDayIndex": int,
-        "workout": {
-            "id": str,               # template ID ("default-empty" if none)
-            "templateId": str,       # duplicate of id for historical reasons
-            "templateName": str,
-            "days": list            # parsed days array
-        }
-    }
-    """
-    assignment = ProgramAssignment.query.filter_by(client_id=client_id, active=True).first()
+    # Resolve client_id to actual internal id (handles unique_url)
+    client = find_client(client_id)
+    if not client:
+        return jsonify({"message": "Client not found!"}), 404
+    norm_id = client.id  # Use resolved internal id
+    # Attempt to fetch active assignment; if DB not migrated, ignore error
+    try:
+        assignment = ProgramAssignment.query.filter_by(client_id=norm_id, active=True).first()
+    except Exception as e:
+        app.logger.warning(f"DB access error for ProgramAssignment: {e}. Falling back to legacy assignments.")
+        assignment = None
 
     if not assignment:
-        # Return a placeholder payload so the UI can detect "no program" without throwing errors
+        # Fallback: legacy JSON assignments file
+        legacy_assignments = _read_legacy_workout_assignments()
+        # match by exact id or by stripping '/client/' prefix
+        identifier_variants = {client_id}
+        if client_id.startswith('/client/'):
+            identifier_variants.add(client_id.replace('/client/',''))
+        legacy = next((a for a in legacy_assignments if a['client_id'] in identifier_variants), None)
+        if legacy:
+            template = WorkoutTemplate.query.get(legacy['template_id'])
+            if template is None:
+                # attempt to read from JSON file
+                legacy_templates = _read_legacy_workout_templates()
+                template_dict = next((t for t in legacy_templates if t['id'] == legacy['template_id']), None)
+                if template_dict:
+                    # Build days_data from legacy structure
+                    if 'days' in template_dict and template_dict['days']:
+                        days_data = template_dict['days']
+                    elif 'exercises' in template_dict and template_dict['exercises']:
+                        days_data = [{
+                            "name": "Day 1",
+                            "groups": template_dict['exercises']
+                        }]
+                    else:
+                        days_data = []
+                    return jsonify({
+                        "assignmentId": legacy['id'],
+                        "startDate": legacy.get('date'),
+                        "currentDayIndex": 0,
+                        "workout": {
+                            "id": template_dict['id'],
+                            "templateId": template_dict['id'],
+                            "templateName": template_dict.get('name','Legacy Workout'),
+                            "days": days_data
+                        }
+                    })
+            else:
+                try:
+                    days_data = json.loads(template.days) if template.days else []
+                except json.JSONDecodeError:
+                    days_data = []
+                return jsonify({
+                    "assignmentId": legacy['id'],
+                    "startDate": legacy.get('date'),
+                    "currentDayIndex": 0,
+                    "workout": {
+                        "id": template.id,
+                        "templateId": template.id,
+                        "templateName": template.name,
+                        "days": days_data
+                    }
+                })
+        # else continue to default-empty response
         return jsonify({
             "workout": {
                 "id": "default-empty",
@@ -681,10 +813,15 @@ def assign_program_to_client(client_id):
             return jsonify({'message': 'Invalid date format. Please use YYYY-MM-DD.'}), 400
 
     # Deactivate existing assignment
-    ProgramAssignment.query.filter_by(client_id=client_id, active=True).update({'active': False})
+    # Remove any previous assignments (active or inactive) to avoid unique constraints or duplicates
+    norm_id = _normalize_client_id(client_id)
+    existing_assignments = ProgramAssignment.query.filter_by(client_id=norm_id).all()
+    for old in existing_assignments:
+        db.session.delete(old)
+    db.session.commit()
 
     assignment = ProgramAssignment(
-        client_id=client_id,
+        client_id=norm_id,
         template_id=template_id,
         start_date=start_date,
         active=True,
@@ -693,6 +830,37 @@ def assign_program_to_client(client_id):
     db.session.add(assignment)
     db.session.commit()
     return jsonify(assignment.to_dict()), 201
+
+@app.route('/api/clients/<client_id>/programs/unassign', methods=['DELETE','OPTIONS'])
+@protected
+def unassign_program_from_client(client_id):
+    """Deactivates (or removes) the active workout assignment for the client.
+    Works for both SQL-backed ProgramAssignment and legacy JSON file."""
+    norm_id = _normalize_client_id(client_id)
+    # First attempt SQL
+    try:
+        active_assignment = ProgramAssignment.query.filter_by(client_id=norm_id, active=True).first()
+        if active_assignment:
+            db.session.delete(active_assignment)
+            db.session.commit()
+            return jsonify({"message": "Program unassigned (DB)."})
+    except Exception as e:
+        app.logger.warning(f"DB error while unassigning program: {e}")
+
+    # Legacy JSON workflow
+    legacy_assignments = _read_legacy_workout_assignments()
+    original_len = len(legacy_assignments)
+    legacy_assignments = [a for a in legacy_assignments if a.get('client_id') != client_id]
+    if len(legacy_assignments) != original_len:
+        import json
+        try:
+            with open(WORKOUT_ASSIGNMENTS_PATH, 'w', encoding='utf-8') as f:
+                json.dump(legacy_assignments, f, indent=4)
+            return jsonify({"message": "Program unassigned (legacy JSON)."})
+        except Exception as e:
+            return jsonify({"message": f"Failed to save legacy assignments: {e}"}), 500
+
+    return jsonify({"message": "No active assignment found."}), 404
 
 @app.route("/api/workout-templates", methods=["GET"])
 @protected
@@ -735,5 +903,222 @@ def delete_program(program_id):
     db.session.delete(program)
     db.session.commit()
     return '', 204
+
+# --- Workout Statistics Endpoint ---
+@app.route("/api/clients/<client_id>/program/<assignment_id>/stats", methods=["GET"])
+@protected
+def get_program_stats(client_id, assignment_id):
+    """Returns the number of times each day of the assignment has been performed.
+
+    Response example:
+    {
+        "day_counts": [2, 1, 0, 0, 0, 0, 0]
+    }
+    """
+    # Fetch the assignment and related template to know how many days exist
+    assignment = ProgramAssignment.query.filter_by(id=assignment_id, client_id=client_id).first()
+    if not assignment:
+        return jsonify({"message": "Assignment not found"}), 404
+
+    template = WorkoutTemplate.query.get(assignment.template_id)
+    if not template:
+        return jsonify({"message": "Template not found"}), 404
+
+    try:
+        days = json.loads(template.days) if template.days else []
+    except json.JSONDecodeError:
+        days = []
+
+    total_days = len(days)
+    # Initialize counts list
+    day_counts = [0] * total_days
+
+    # Aggregate counts from WorkoutLog
+    logs = WorkoutLog.query.filter_by(client_id=client_id, assignment_id=assignment_id).all()
+    for log in logs:
+        if 0 <= log.day_index_completed < total_days:
+            day_counts[log.day_index_completed] += 1
+
+    return jsonify({"day_counts": day_counts})
+
+# --- Workout Logging Endpoint ---
+@app.route("/api/clients/<client_id>/program/log", methods=["POST"])
+def log_workout(client_id):
+    """Logs a completed workout for a client."""
+    client = find_client(client_id)
+    if not client:
+        return jsonify({"message": "Client not found!"}), 404
+    
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "No data provided"}), 400
+
+    assignment_id = data.get('assignment_id')
+    if not assignment_id:
+        return jsonify({"message": "Assignment ID required"}), 400
+
+    # Create workout log entry
+    workout_log = WorkoutLog(
+        client_id=client.id,
+        assignment_id=assignment_id,
+        day_index_completed=data.get('day_index_completed', 0),
+        actual_date=date.today(),
+        performance_data=json.dumps({
+            'performanceLog': data.get('performanceLog', {}),
+            'exerciseNotes': data.get('exerciseNotes', {}),
+            'elapsedTime': data.get('elapsedTime', 0)
+        })
+    )
+    
+    try:
+        db.session.add(workout_log)
+        db.session.commit()
+        return jsonify({"message": "Workout logged successfully", "log_id": workout_log.id}), 201
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error logging workout: {e}")
+        return jsonify({"message": "Failed to log workout"}), 500
+
+# --- Workout Session Management ---
+@app.route("/api/clients/<client_id>/workout-session/save", methods=["POST"])
+def save_workout_progress(client_id):
+    """Saves in-progress workout data for later resumption."""
+    client = find_client(client_id)
+    if not client:
+        return jsonify({"message": "Client not found!"}), 404
+    
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "No data provided"}), 400
+
+    try:
+        # Store session data in client's session field or create a separate session table
+        # For now, using a simple approach with a session file per client
+        import os
+        session_dir = os.path.join('backend', 'sessions')
+        os.makedirs(session_dir, exist_ok=True)
+        
+        session_file = os.path.join(session_dir, f'client_{client.id}_session.json')
+        session_data = {
+            'timestamp': datetime.now().isoformat(),
+            'workout_data': data,
+            'client_id': client.id
+        }
+        
+        with open(session_file, 'w') as f:
+            json.dump(session_data, f)
+            
+        return jsonify({"message": "Workout progress saved"}), 200
+    except Exception as e:
+        app.logger.error(f"Error saving workout session: {e}")
+        return jsonify({"message": "Failed to save workout session"}), 500
+
+@app.route("/api/clients/<client_id>/workout-session", methods=["GET"])
+def get_workout_session(client_id):
+    """Retrieves saved workout session data."""
+    client = find_client(client_id)
+    if not client:
+        return jsonify({"message": "Client not found!"}), 404
+
+    try:
+        import os
+        session_file = os.path.join('backend', 'sessions', f'client_{client.id}_session.json')
+        
+        if not os.path.exists(session_file):
+            return jsonify({"session": None}), 200
+        
+        with open(session_file, 'r') as f:
+            session_data = json.load(f)
+            
+        # Check if session is recent (within 24 hours)
+        from datetime import datetime, timedelta
+        session_time = datetime.fromisoformat(session_data['timestamp'])
+        if datetime.now() - session_time > timedelta(hours=24):
+            # Session too old, delete it
+            os.remove(session_file)
+            return jsonify({"session": None}), 200
+            
+        return jsonify({"session": session_data}), 200
+    except Exception as e:
+        app.logger.error(f"Error retrieving workout session: {e}")
+        return jsonify({"session": None}), 200
+
+@app.route("/api/clients/<client_id>/workout-session", methods=["DELETE"])
+def clear_workout_session(client_id):
+    """Clears saved workout session data."""
+    client = find_client(client_id)
+    if not client:
+        return jsonify({"message": "Client not found!"}), 404
+
+    try:
+        import os
+        session_file = os.path.join('backend', 'sessions', f'client_{client.id}_session.json')
+        
+        if os.path.exists(session_file):
+            os.remove(session_file)
+            
+        return jsonify({"message": "Session cleared"}), 200
+    except Exception as e:
+        app.logger.error(f"Error clearing workout session: {e}")
+        return jsonify({"message": "Failed to clear session"}), 500
+
+# --- Exercise History Endpoint ---
+@app.route("/api/clients/<client_id>/exercise/<exercise_id>/history", methods=["GET"])
+def get_exercise_history(client_id, exercise_id):
+    """Gets the exercise history for a specific client and exercise."""
+    client = find_client(client_id)
+    if not client:
+        return jsonify({"message": "Client not found!"}), 404
+
+    # Get all workout logs for this client
+    logs = WorkoutLog.query.filter_by(client_id=client.id).order_by(WorkoutLog.actual_date.desc()).all()
+    
+    exercise_history = []
+    for log in logs:
+        try:
+            performance_data = json.loads(log.performance_data) if log.performance_data else {}
+            performance_log = performance_data.get('performanceLog', {})
+            
+            if exercise_id in performance_log:
+                sets_data = performance_log[exercise_id]
+                exercise_history.append({
+                    'date': log.actual_date.isoformat(),
+                    'sets': sets_data,
+                    'day_index': log.day_index_completed
+                })
+        except json.JSONDecodeError:
+            continue
+    
+    return jsonify(exercise_history)
+
+# --- Get Previous Workout Data ---
+@app.route("/api/clients/<client_id>/exercise/<exercise_id>/previous", methods=["GET"])
+def get_previous_exercise_data(client_id, exercise_id):
+    """Gets the most recent data for a specific exercise."""
+    client = find_client(client_id)
+    if not client:
+        return jsonify({"message": "Client not found!"}), 404
+
+    # Get most recent workout log for this client with this exercise
+    logs = WorkoutLog.query.filter_by(client_id=client.id).order_by(WorkoutLog.actual_date.desc()).all()
+    
+    for log in logs:
+        try:
+            performance_data = json.loads(log.performance_data) if log.performance_data else {}
+            performance_log = performance_data.get('performanceLog', {})
+            
+            if exercise_id in performance_log:
+                sets_data = performance_log[exercise_id]
+                # Get the best set (highest weight or reps)
+                best_set = max(sets_data, key=lambda s: float(s.get('weight', 0)) * float(s.get('reps', 0)), default={})
+                return jsonify({
+                    'weight': best_set.get('weight', ''),
+                    'reps': best_set.get('reps', ''),
+                    'date': log.actual_date.isoformat()
+                })
+        except (json.JSONDecodeError, ValueError):
+            continue
+    
+    return jsonify({'weight': '', 'reps': '', 'date': None})
 
 # ... (all other routes and socketio handlers) ... 

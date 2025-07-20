@@ -27,10 +27,5 @@
   "env": {
     "FLASK_ENV": "production",
     "DATABASE_URL": "sqlite:///database.db"
-  },
-  "functions": {
-    "backend/run.py": {
-      "maxDuration": 10
-    }
   }
 } 

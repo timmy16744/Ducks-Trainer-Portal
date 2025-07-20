@@ -15,6 +15,11 @@ except ImportError:
 
 app = create_app()
 
+# For Vercel, we need to export the app object
+# Vercel will handle the server startup
+def handler(request):
+    return app(request.environ, request.start_response)
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"[run.py] 🚀  Starting Ducks Trainer Portal backend on port {port}...")

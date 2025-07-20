@@ -30,7 +30,7 @@ def create_app():
     migrate.init_app(app, db, render_as_batch=True)
     cache.init_app(app)
     
-    allowed_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001").split(',')
+    allowed_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3001,https://ducks-trainer-portal.vercel.app").split(',')
     CORS(app,
          supports_credentials=True,
          resources={r"/api/*": {

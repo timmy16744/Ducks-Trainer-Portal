@@ -1,123 +1,172 @@
-# Ducks Trainer Portal - The Ultimate Self-Hosted Coaching Platform
+# 🦆 Ducks Trainer Portal
 
-This repository contains the complete application for the Ducks Trainer Portal, a self-hosted platform for personal trainers to manage clients, design workout programs, and track progress under their own brand.
+A comprehensive fitness training portal built with React and Flask, featuring real-time messaging, workout tracking, nutrition monitoring, and progress analytics.
 
-This project is built with a **React frontend** and a **Flask backend**, using a **SQLite** database for data persistence.
+## 🚀 Live Demo
 
----
+**Frontend**: [https://ducks-trainer-portal.vercel.app](https://ducks-trainer-portal.vercel.app)
+**Backend API**: [https://ducks-trainer-portal.vercel.app/api](https://ducks-trainer-portal.vercel.app/api)
 
-## Key Features
+## ✨ Features
 
-- **Client Management**: A full-featured client roster with onboarding, archiving, and detailed profiles. All client information is editable directly within the UI.
-- **Dynamic Program Design**:
-  - **Exercise Library**: A comprehensive library of exercises, imported locally to ensure reliability.
-  - **Workout Editor**: Build custom workout templates with a drag-and-drop interface, supporting sets, reps, notes, and advanced types like supersets.
-  - **Program Dashboard**: Assign multi-day workout programs to individual clients or groups.
-- **Data-Driven Insights**:
-  - **Progress Tracking**: Monitor client body stats, workout logs, and more.
-  - **Alerts Dashboard**: Get notifications for important client events.
-- **Resource & Communication Hub**:
-  - Upload and share resources like PDFs and videos.
-  - Integrated chat for real-time communication.
-- **100% White-Label**: Your brand, your domain.
+- 🏋️ **Workout Tracking** - Complete workout management with rest timers and progress logging
+- 💬 **Real-time Chat** - Live messaging between trainers and clients
+- 🍎 **Nutrition Tracking** - Comprehensive macro and calorie monitoring
+- 📊 **Progress Analytics** - Charts and statistics for body composition and performance
+- 🏆 **Achievement System** - Gamified progress tracking with rewards
+- 📱 **Mobile Responsive** - Optimized for all devices
+- 🔐 **Secure Authentication** - Protected client and trainer portals
 
----
+## 🛠️ Tech Stack
 
-## Tech Stack
+**Frontend:**
+- React 18 with Hooks
+- Tailwind CSS for styling
+- Framer Motion for animations
+- Socket.IO for real-time features
+- React Query for data management
 
-- **Backend**: Flask with SQLAlchemy ORM
-- **Frontend**: React (Create React App) with Tailwind CSS
-- **Real-time Communication**: Flask-SocketIO
-- **Database**: SQLite
-- **Database Migrations**: Flask-Migrate with Alembic
+**Backend:**
+- Flask with SQLAlchemy
+- Socket.IO for WebSocket connections
+- SQLite database
+- Flask-CORS for cross-origin requests
 
----
-
-## Local Development Setup
-
-Follow these steps to get the application running on your local machine.
+## 📦 Local Development
 
 ### Prerequisites
+- Node.js 18+
+- Python 3.8+
+- Git
 
-- **Python** (3.8+ recommended)
-- **Node.js** (LTS version recommended) & **npm**
+### Setup Instructions
 
-### 1. Initial Setup (Run Once)
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/ducks-trainer-portal.git
+   cd ducks-trainer-portal
+   ```
 
-Clone the repository and install all dependencies from the project root directory.
+2. **Install frontend dependencies**
+   ```bash
+   cd frontend
+   npm install
+   ```
 
+3. **Install backend dependencies**
+   ```bash
+   cd ../backend
+   pip install -r requirements.txt
+   ```
+
+4. **Start development servers**
+   ```bash
+   # Terminal 1 - Backend
+   cd backend
+   python run.py
+   
+   # Terminal 2 - Frontend
+   cd frontend
+   npm start
+   ```
+
+5. **Access the application**
+   - Frontend: http://localhost:3000
+   - Backend API: http://localhost:5000/api
+
+## 🚀 Vercel Deployment
+
+This app is configured for easy deployment on Vercel:
+
+### Quick Deploy
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/yourusername/ducks-trainer-portal)
+
+### Manual Deployment
+
+1. **Connect to Vercel**
+   ```bash
+   npm i -g vercel
+   vercel login
+   ```
+
+2. **Deploy**
+   ```bash
+   vercel --prod
+   ```
+
+3. **Environment Variables**
+   The app will automatically configure the necessary environment variables for production.
+
+## 📱 Mobile Access
+
+Once deployed, you can access the app on any device:
+- **Smartphones** - Full responsive design
+- **Tablets** - Optimized tablet interface
+- **Desktop** - Complete desktop experience
+
+## 🔧 Configuration
+
+### Environment Variables
+
+**Frontend** (`frontend/env.production`):
 ```bash
-# Navigate to your project's root folder
-# e.g., C:\Users\timhu\Documents\Ducks Trainer Portal
-
-# Install both frontend and backend dependencies
-npm install
-```
-*This command will run `npm install` in the `frontend` directory and `pip install -r requirements.txt` in the `backend` directory.*
-
-### 2. Database Initialization (Run Once)
-
-Before you start the servers for the first time, you need to initialize the database and import the exercise library.
-
-```bash
-# From the project root folder:
-
-# 1. Create the initial database schema
-npm run db:upgrade
-
-# 2. Import the exercise library from the local JSON file
-npm run db:import-exercises
-```
-
-### 3. Running the Application
-
-To run the application, you need to start both the backend and frontend servers. It's recommended to do this in two separate terminals.
-
-**Terminal 1: Start the Backend (Flask)**
-
-```bash
-# Navigate to the backend directory
-cd backend
-
-# Start the Flask server
-python run.py
-```
-The backend will be running at `http://localhost:5000`.
-
-**Terminal 2: Start the Frontend (React)**
-
-```bash
-# Navigate to the frontend directory
-cd frontend
-
-# Start the React development server
-npm start
-```
-The frontend will open automatically in your browser at `http://localhost:3000`.
-
----
-
-## Database Migrations Workflow
-
-As you develop the application, you will inevitably need to change the database schema by modifying `backend/models.py`. We have a simple, reliable workflow for this.
-
-After you have changed the `models.py` file, run the following two commands from the **project root directory**:
-
-**1. Create the Migration Script**
-
-This command detects your changes and generates a new migration file.
-
-```bash
-# Add a short, descriptive message about the changes
-npm run db:migrate -m "Your descriptive message here"
-```
-
-**2. Apply the Migration**
-
-This command applies the changes from the new migration file to your database.
-
-```bash
-npm run db:upgrade
+REACT_APP_API_URL=https://your-app.vercel.app
+REACT_APP_SOCKET_URL=https://your-app.vercel.app
 ```
 
-That's it! Your database schema is now up-to-date with your models. There is no need to manually handle environment variables or change directories.
+**Backend**:
+```bash
+FLASK_ENV=production
+DATABASE_URL=sqlite:///database.db
+CORS_ALLOWED_ORIGINS=https://your-app.vercel.app
+```
+
+## 📊 Database Schema
+
+The app uses SQLite with the following main tables:
+- `clients` - User profiles and settings
+- `workout_logs` - Exercise performance tracking
+- `nutrition_logs` - Food and macro tracking
+- `body_stats` - Weight and measurement history
+- `messages` - Chat system data
+- `achievements` - Gamification rewards
+
+## 🎯 Usage
+
+### For Clients
+1. Access your unique client URL
+2. View today's workout and nutrition goals
+3. Log workouts with rest timers and progress tracking
+4. Track nutrition with macro breakdowns
+5. Chat with your trainer in real-time
+6. View progress analytics and achievements
+
+### For Trainers
+1. Manage multiple clients
+2. Create and assign workout programs
+3. Monitor client progress in real-time
+4. Communicate via built-in messaging
+5. Track client achievements and milestones
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+For support, email support@duckstrainer.com or join our Discord community.
+
+## 🙏 Acknowledgments
+
+- WGER Exercise Database for exercise data
+- React community for excellent documentation
+- Flask community for backend framework
+- Vercel for seamless deployment platform

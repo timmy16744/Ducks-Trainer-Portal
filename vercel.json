@@ -1,0 +1,36 @@
+{
+  "version": 2,
+  "name": "ducks-trainer-portal",
+  "builds": [
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "build"
+      }
+    },
+    {
+      "src": "backend/run.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "backend/run.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "frontend/build/index.html"
+    }
+  ],
+  "env": {
+    "FLASK_ENV": "production",
+    "DATABASE_URL": "sqlite:///database.db"
+  },
+  "functions": {
+    "backend/run.py": {
+      "maxDuration": 10
+    }
+  }
+} 

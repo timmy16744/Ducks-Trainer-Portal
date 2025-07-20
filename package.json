@@ -1,34 +1,21 @@
 {
   "name": "ducks-trainer-portal",
   "version": "1.0.0",
-  "description": "Comprehensive coaching portal with WGER exercise integration",
+  "description": "Comprehensive fitness training portal",
   "scripts": {
-    "dev": "concurrently --names \"BACKEND,FRONTEND\" --prefix-colors \"blue,green\" \"npm run start:backend\" \"npm run start:frontend\"",
-    "start:backend": "cd backend && python app.py",
-    "start:frontend": "cd frontend && npm start",
-    "install:all": "cd frontend && npm install && cd ../backend && pip install -r requirements.txt",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject",
-    "db:migrate": "cd backend && cross-env FLASK_APP=app.py flask db migrate",
-    "db:upgrade": "cd backend && cross-env FLASK_APP=app.py flask db upgrade",
-    "db:downgrade": "cd backend && cross-env FLASK_APP=app.py flask db downgrade base",
-    "db:import-exercises": "python -c \"from backend.app import create_app; from backend.import_from_json import import_exercises_from_json; app = create_app(); app.app_context().push(); print(import_exercises_from_json())\""
+    "install": "cd frontend && npm install",
+    "build": "cd frontend && npm run build",
+    "start": "cd backend && python run.py",
+    "dev": "cd frontend && npm run dev",
+    "vercel-build": "cd frontend && npm run build"
   },
-  "devDependencies": {
-    "concurrently": "^8.2.2",
-    "cross-env": "^7.0.3"
+  "workspaces": [
+    "frontend"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
   },
-  "private": true,
-  "dependencies": {
-    "@dnd-kit/core": "^6.3.1",
-    "@dnd-kit/sortable": "^10.0.0",
-    "@dnd-kit/utilities": "^3.2.2",
-    "immer": "^10.1.1",
-    "react-beautiful-dnd": "^13.1.1",
-    "react-hot-toast": "^2.5.2",
-    "react-toastify": "^11.0.5",
-    "recharts": "^3.1.0",
-    "socket.io-client": "^4.8.1"
-  }
+  "keywords": ["fitness", "training", "react", "flask"],
+  "author": "Ducks Trainer Portal",
+  "license": "MIT"
 }
